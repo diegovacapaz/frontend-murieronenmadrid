@@ -1,8 +1,12 @@
 import {
   MundialitoBall,
   MundialitoBoardEntry,
+  MundialitoGlobalSummary,
+  MundialitoHighlight,
   MundialitoMedal,
+  MundialitoPerformance,
   MundialitoPhaseEliminations,
+  MundialitoRecord,
   MundialitoRun,
   MundialitoSummary,
 } from '../entities/mundialito.entity';
@@ -10,8 +14,12 @@ import {
   MundialitoBallJson,
   MundialitoBoardEntryDB,
   MundialitoCurrentDB,
+  MundialitoGlobalSummaryDB,
+  MundialitoHighlightDB,
   MundialitoMedalDB,
+  MundialitoPerformanceDB,
   MundialitoPhaseEliminationsDB,
+  MundialitoRecordDB,
   MundialitoSummaryDB,
 } from '../interfaces/database';
 
@@ -73,7 +81,86 @@ export class MundialitoFactory {
     summary.titles = db.titles;
     summary.eliminations = db.eliminations;
     summary.bestSlot = db.bestSlot;
+    summary.runsEnded = db.runsEnded;
+    summary.qualified = db.qualified;
+    summary.qualifiedRate = db.qualifiedRate;
+    summary.avgRunLength = db.avgRunLength;
+    summary.koPlayed = db.koPlayed;
+    summary.koPassed = db.koPassed;
+    summary.koRate = db.koRate;
+    summary.semis = db.semis;
+    summary.finals = db.finals;
+    summary.droughtRuns = db.droughtRuns;
+    summary.perfectRuns = db.perfectRuns;
     return summary;
+  }
+
+  static toGlobalSummary(db: MundialitoGlobalSummaryDB): MundialitoGlobalSummary {
+    const summary = new MundialitoGlobalSummary();
+    summary.runsEnded = db.runsEnded;
+    summary.titles = db.titles;
+    summary.coronationRate = db.coronationRate;
+    summary.qualified = db.qualified;
+    summary.qualifiedRate = db.qualifiedRate;
+    summary.avgRunLength = db.avgRunLength;
+    summary.players = db.players;
+    summary.aliveNow = db.aliveNow;
+    summary.inKnockoutNow = db.inKnockoutNow;
+    summary.perfectRuns = db.perfectRuns;
+    return summary;
+  }
+
+  static toPerformanceList(dbs: MundialitoPerformanceDB[]): MundialitoPerformance[] {
+    return dbs.map((db) => {
+      const row = new MundialitoPerformance();
+      row.position = db.position;
+      row.playerId = db.playerId;
+      row.displayName = db.displayName;
+      row.nickname = db.nickname;
+      row.photo = db.photo;
+      row.playerState = db.playerState;
+      row.isSagrado = db.isSagrado;
+      row.cups = db.cups;
+      row.runsPlayed = db.runsPlayed;
+      row.runsEnded = db.runsEnded;
+      row.qualified = db.qualified;
+      row.qualifiedRate = db.qualifiedRate;
+      row.avgRunLength = db.avgRunLength;
+      row.koPlayed = db.koPlayed;
+      row.koPassed = db.koPassed;
+      row.koRate = db.koRate;
+      row.semis = db.semis;
+      row.finals = db.finals;
+      row.titles = db.titles;
+      row.bestSlot = db.bestSlot;
+      row.droughtRuns = db.droughtRuns;
+      return row;
+    });
+  }
+
+  static toRecordList(dbs: MundialitoRecordDB[]): MundialitoRecord[] {
+    return dbs.map((db) => {
+      const record = new MundialitoRecord();
+      record.kind = db.kind;
+      record.playerId = db.playerId;
+      record.displayName = db.displayName;
+      record.photo = db.photo;
+      record.value = db.value;
+      return record;
+    });
+  }
+
+  static toHighlightList(dbs: MundialitoHighlightDB[]): MundialitoHighlight[] {
+    return dbs.map((db) => {
+      const highlight = new MundialitoHighlight();
+      highlight.kind = db.kind;
+      highlight.playerId = db.playerId;
+      highlight.displayName = db.displayName;
+      highlight.photo = db.photo;
+      highlight.times = db.times;
+      highlight.played = db.played;
+      return highlight;
+    });
   }
 
   static toEliminationsList(

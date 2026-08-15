@@ -528,6 +528,140 @@ SELECT
 FROM walk w;
 
 -- -----------------------------------------------------------------------------
+-- vMundialitoEndedRuns — las corridas que ya terminaron
+-- -----------------------------------------------------------------------------
+-- Una fila por mundialito cerrado (eliminado o campeon), con el partido en el
+-- que se cerro y hasta donde llego.
+--
+-- Es la base de casi toda estadistica del mundialito, y deja afuera la corrida
+-- en curso a proposito: un porcentaje de clasificacion necesita un denominador
+-- de corridas terminadas. Contar la que se esta jugando adentro haria que el
+-- numero se moviera segun el dia, sin que nadie haya quedado afuera.
+--
+-- qualified = paso la fase de grupos. Llegar al puesto 4 es exactamente eso,
+-- haya perdido ahi o mas adelante.
+CREATE OR REPLACE VIEW vMundialitoEndedRuns AS
+SELECT
+  r.playerId,
+  r.runIndex,
+  r.matchId,
+  r.playedAt,
+  r.slot     AS lastSlot,
+  r.outcome,
+  CAST(r.slot >= 4 AS SIGNED) AS qualified
+FROM vMundialitoRuns r
+WHERE r.outcome <> 'ALIVE';
+
+-- -----------------------------------------------------------------------------
+-- vMundialitoPlayerStats — el rendimiento historico de cada jugador
+-- -----------------------------------------------------------------------------
+-- Incluye a TODOS los jugadores, con ceros si nunca jugaron: el perfil de
+-- alguien recien creado tiene que abrir igual. La tabla de la solapa filtra por
+-- su cuenta a los que tienen partidos.
+--
+-- droughtRuns es la sequia: cuantas corridas terminadas lleva sin clasificar.
+-- Sale de restar indices y no de recorrer el historial porque los mundialitos
+-- terminados de un jugador estan numerados 1..N sin huecos: si el ultimo es el
+-- 11 y el ultimo que clasifico fue el 9, hace dos que no pasa de grupos.
+CREATE OR REPLACE VIEW vMundialitoPlayerStats AS
+SELECT
+  p.playerId,
+  COALESCE(ended.runsEnded, 0)                                AS runsEnded,
+  COALESCE(ended.qualified, 0)                                AS qualified,
+  CASE WHEN ended.runsEnded > 0
+       THEN ended.qualified / ended.runsEnded END             AS qualifiedRate,
+  CASE WHEN ended.runsEnded > 0
+       THEN ended.totalLength / ended.runsEnded END           AS avgRunLength,
+  COALESCE(ended.lastRun, 0) - COALESCE(ended.lastQualifiedRun, 0) AS droughtRuns,
+  COALESCE(ko.koPlayed, 0)                                    AS koPlayed,
+  COALESCE(ko.koPassed, 0)                                    AS koPassed,
+  CASE WHEN ko.koPlayed > 0
+       THEN ko.koPassed / ko.koPlayed END                     AS koRate,
+  COALESCE(ko.semis, 0)                                       AS semis,
+  COALESCE(ko.finals, 0)                                      AS finals,
+  COALESCE(all_.matchesPlayed, 0)                             AS matchesPlayed,
+  COALESCE(all_.runsPlayed, 0)                                AS runsPlayed,
+  COALESCE(all_.titles, 0)                                    AS titles,
+  COALESCE(all_.eliminations, 0)                              AS eliminations,
+  COALESCE(all_.bestSlot, 0)                                  AS bestSlot,
+  COALESCE(perfect.perfectRuns, 0)                            AS perfectRuns
+FROM Players p
+LEFT JOIN (
+  SELECT
+    e.playerId,
+    CAST(COUNT(*)                  AS SIGNED) AS runsEnded,
+    CAST(SUM(e.qualified)          AS SIGNED) AS qualified,
+    CAST(SUM(e.lastSlot)           AS SIGNED) AS totalLength,
+    CAST(MAX(e.runIndex)           AS SIGNED) AS lastRun,
+    CAST(MAX(CASE WHEN e.qualified = 1 THEN e.runIndex END) AS SIGNED) AS lastQualifiedRun
+  FROM vMundialitoEndedRuns e
+  GROUP BY e.playerId
+) ended ON ended.playerId = p.playerId
+LEFT JOIN (
+  -- Eliminacion directa: del puesto 4 en adelante. Superar es no perder, que es
+  -- la misma regla con la que se pasa de ronda.
+  SELECT
+    r.playerId,
+    CAST(COUNT(*)                    AS SIGNED) AS koPlayed,
+    CAST(SUM(r.result <> 'L')        AS SIGNED) AS koPassed,
+    CAST(SUM(r.slot = 7)             AS SIGNED) AS semis,
+    CAST(SUM(r.slot = 8)             AS SIGNED) AS finals
+  FROM vMundialitoRuns r
+  WHERE r.slot >= 4
+  GROUP BY r.playerId
+) ko ON ko.playerId = p.playerId
+LEFT JOIN (
+  SELECT
+    r.playerId,
+    CAST(COUNT(*)                          AS SIGNED) AS matchesPlayed,
+    CAST(MAX(r.runIndex)                   AS SIGNED) AS runsPlayed,
+    CAST(SUM(r.outcome = 'CHAMPION')       AS SIGNED) AS titles,
+    CAST(SUM(r.outcome = 'OUT')            AS SIGNED) AS eliminations,
+    CAST(MAX(r.slot)                       AS SIGNED) AS bestSlot
+  FROM vMundialitoRuns r
+  GROUP BY r.playerId
+) all_ ON all_.playerId = p.playerId
+LEFT JOIN (
+  -- El mundialito perfecto: ocho partidos, ocho victorias.
+  SELECT run.playerId, CAST(COUNT(*) AS SIGNED) AS perfectRuns
+  FROM (
+    SELECT r.playerId, r.runIndex
+    FROM vMundialitoRuns r
+    GROUP BY r.playerId, r.runIndex
+    HAVING COUNT(*) = 8 AND SUM(r.result = 'W') = 8
+  ) run
+  GROUP BY run.playerId
+) perfect ON perfect.playerId = p.playerId;
+
+-- -----------------------------------------------------------------------------
+-- vMundialitoKnockouts — quien estaba enfrente cuando alguien quedo afuera
+-- -----------------------------------------------------------------------------
+-- Una fila por rival presente en el partido que elimino a un jugador. Ojo con
+-- leerla como un duelo: en el mundialito no se pierde contra una persona sino
+-- contra un equipo, asi que esto es "estaba del otro lado", no "te gano el".
+--
+-- Solo eliminaciones POR DERROTA. En la fase de grupos se puede quedar afuera
+-- empatando —o incluso ganando el tercero, si venia de dos derrotas—, y ahi no
+-- hay nadie a quien atribuirselo.
+CREATE OR REPLACE VIEW vMundialitoKnockouts AS
+SELECT
+  r.playerId      AS eliminatedId,
+  other.playerId  AS rivalId,
+  r.matchId,
+  r.playedAt,
+  r.slot,
+  r.runIndex
+FROM vMundialitoRuns r
+INNER JOIN MatchPlayers mine
+  ON mine.matchId  = r.matchId
+ AND mine.playerId = r.playerId
+INNER JOIN MatchPlayers other
+  ON other.matchId = r.matchId
+ AND other.team   <> mine.team
+WHERE r.outcome = 'OUT'
+  AND r.result  = 'L';
+
+-- -----------------------------------------------------------------------------
 -- vMundialitoTitles — los mundialitos ganados por cada jugador
 -- -----------------------------------------------------------------------------
 -- firstTitleAt es el desempate del medallero: entre dos jugadores con la misma

@@ -5,8 +5,12 @@ import { MundialitoFactory } from './helpers/mundialito.factory';
 import {
   MundialitoBoardEntryDB,
   MundialitoCurrentDB,
+  MundialitoGlobalSummaryDB,
+  MundialitoHighlightDB,
   MundialitoMedalDB,
+  MundialitoPerformanceDB,
   MundialitoPhaseEliminationsDB,
+  MundialitoRecordDB,
   MundialitoSummaryDB,
 } from './interfaces/database';
 import { IMundialitoRepository } from './interfaces/mundialito.repository.interface';
@@ -20,26 +24,44 @@ export class MundialitoRepository implements IMundialitoRepository {
   constructor(private readonly db: DatabaseService) {}
 
   async findBoard(): Promise<MundialitoBoard> {
-    const [medalWinners, board] = await this.db.callMulti<
-      [MundialitoMedalDB[], MundialitoBoardEntryDB[]]
-    >('GetMundialitoBoard');
+    const [medalWinners, board, summary, performance, eliminations, records] =
+      await this.db.callMulti<
+        [
+          MundialitoMedalDB[],
+          MundialitoBoardEntryDB[],
+          MundialitoGlobalSummaryDB[],
+          MundialitoPerformanceDB[],
+          MundialitoPhaseEliminationsDB[],
+          MundialitoRecordDB[],
+        ]
+      >('GetMundialitoBoard');
 
     return {
       medalWinners: MundialitoFactory.toMedalList(medalWinners),
       board: MundialitoFactory.toBoardEntryList(board),
+      summary: MundialitoFactory.toGlobalSummary(summary[0]),
+      performance: MundialitoFactory.toPerformanceList(performance),
+      eliminationsByPhase: MundialitoFactory.toEliminationsList(eliminations),
+      records: MundialitoFactory.toRecordList(records),
     };
   }
 
-  async findByPlayer(playerId: number): Promise<PlayerMundialito> {
-    const [summary, current, eliminationsByPhase] = await this.db.callMulti<
-      [MundialitoSummaryDB[], MundialitoCurrentDB[], MundialitoPhaseEliminationsDB[]]
-    >('GetPlayerMundialito', [playerId]);
+  async findByPlayer(playerId: number, minAgainst: number): Promise<PlayerMundialito> {
+    const [summary, current, eliminationsByPhase, highlights] = await this.db.callMulti<
+      [
+        MundialitoSummaryDB[],
+        MundialitoCurrentDB[],
+        MundialitoPhaseEliminationsDB[],
+        MundialitoHighlightDB[],
+      ]
+    >('GetPlayerMundialito', [playerId, minAgainst]);
 
     return {
       summary: MundialitoFactory.toSummary(summary[0]),
       // Sin partidos elegibles no hay corrida: el perfil tiene que abrir igual.
       current: MundialitoFactory.toCurrent(current[0]),
       eliminationsByPhase: MundialitoFactory.toEliminationsList(eliminationsByPhase),
+      highlights: MundialitoFactory.toHighlightList(highlights),
     };
   }
 }

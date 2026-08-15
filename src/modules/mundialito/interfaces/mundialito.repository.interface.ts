@@ -2,5 +2,5 @@ import type { MundialitoBoard, PlayerMundialito } from '../entities/mundialito.e
 
 export interface IMundialitoRepository {
   findBoard(): Promise<MundialitoBoard>;
-  findByPlayer(playerId: number): Promise<PlayerMundialito>;
+  findByPlayer(playerId: number, minAgainst: number): Promise<PlayerMundialito>;
 }

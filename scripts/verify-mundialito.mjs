@@ -86,6 +86,9 @@ function runMundialito(matches) {
     rows.push({
       playerId: match.playerId,
       matchId: match.matchId,
+      // El resultado viaja en la fila porque las metricas de rendimiento se
+      // recalculan desde aca: sin el, "supero la ronda" da siempre que si.
+      result: match.result,
       runIndex,
       slot,
       groupPoints,
@@ -205,8 +208,103 @@ async function main() {
       }
     }
 
+    // Las metricas de rendimiento (vMundialitoPlayerStats) son agregaciones
+    // sobre el mismo plegado, asi que se pueden recalcular desde `expected` sin
+    // volver a mirar la base. Se verifican porque una agregacion equivocada no
+    // rompe nada: devuelve otro numero y nadie se entera.
+    const [stats] = await connection.query(`
+      SELECT playerId, runsEnded, qualified, koPlayed, koPassed, semis, finals,
+             titles, eliminations, bestSlot, droughtRuns, perfectRuns
+      FROM vMundialitoPlayerStats
+      WHERE matchesPlayed > 0
+    `);
+
+    const expectedStats = new Map();
+    for (const row of expected) {
+      const acc = expectedStats.get(row.playerId) ?? {
+        runsEnded: 0,
+        qualified: 0,
+        koPlayed: 0,
+        koPassed: 0,
+        semis: 0,
+        finals: 0,
+        titles: 0,
+        eliminations: 0,
+        bestSlot: 0,
+        lastRun: 0,
+        lastQualifiedRun: 0,
+        perfectRuns: 0,
+        runWins: new Map(),
+        runLengths: new Map(),
+      };
+
+      if (row.slot > GROUP_SLOTS) {
+        acc.koPlayed += 1;
+        if (row.result !== 'L') acc.koPassed += 1;
+        if (row.slot === 7) acc.semis += 1;
+        if (row.slot === 8) acc.finals += 1;
+      }
+
+      acc.bestSlot = Math.max(acc.bestSlot, row.slot);
+      acc.runLengths.set(row.runIndex, row.slot);
+      if (row.result === 'W') {
+        acc.runWins.set(row.runIndex, (acc.runWins.get(row.runIndex) ?? 0) + 1);
+      }
+
+      if (row.outcome !== 'ALIVE') {
+        acc.runsEnded += 1;
+        acc.lastRun = row.runIndex;
+        if (row.outcome === 'CHAMPION') acc.titles += 1;
+        else acc.eliminations += 1;
+        // Clasificar es haber llegado al puesto 4, se haya muerto ahi o despues.
+        if (row.slot >= 4) {
+          acc.qualified += 1;
+          acc.lastQualifiedRun = row.runIndex;
+        }
+      }
+
+      expectedStats.set(row.playerId, acc);
+    }
+
+    for (const [playerId, acc] of expectedStats) {
+      for (const [runIndex, length] of acc.runLengths) {
+        if (length === SLOTS && acc.runWins.get(runIndex) === SLOTS) acc.perfectRuns += 1;
+      }
+      acc.droughtRuns = acc.lastRun - acc.lastQualifiedRun;
+      expectedStats.set(playerId, acc);
+    }
+
+    for (const row of stats) {
+      const acc = expectedStats.get(row.playerId);
+      if (!acc) {
+        problems.push(`stats: el jugador ${row.playerId} no deberia tener fila`);
+        continue;
+      }
+      for (const field of [
+        'runsEnded',
+        'qualified',
+        'koPlayed',
+        'koPassed',
+        'semis',
+        'finals',
+        'titles',
+        'eliminations',
+        'bestSlot',
+        'droughtRuns',
+        'perfectRuns',
+      ]) {
+        if (Number(row[field]) !== acc[field]) {
+          problems.push(
+            `stats jugador ${row.playerId}: ${field} esperado ${acc[field]}, ` +
+              `obtenido ${row[field]}`,
+          );
+        }
+      }
+    }
+
     console.log(`[verify] ${expected.length} partidos en ${byPlayer.size} jugadores`);
     console.log(`[verify] ${current.length} corridas vigentes`);
+    console.log(`[verify] ${stats.length} filas de rendimiento`);
 
     if (problems.length > 0) {
       console.error(`[verify] ${problems.length} DIFERENCIAS:`);

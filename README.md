@@ -211,6 +211,9 @@ plegado con reinicio sobre los partidos de cada jugador:
 ```
 vMundialitoMatches        partidos elegibles, numerados por jugador
 vMundialitoRuns           + mundialito, puesto, fase y desenlace (CTE recursivo)
+vMundialitoEndedRuns      las corridas ya cerradas: base de toda estadística
+vMundialitoPlayerStats    rendimiento por jugador (clasificación, mata-mata, sequía)
+vMundialitoKnockouts      quién estaba enfrente en cada eliminación
 vMundialitoCurrent        la corrida vigente de cada uno, con sus pelotas en JSON
 vMundialitoTitles         cuántos ganó cada uno y cuándo ganó el primero
 ```

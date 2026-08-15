@@ -69,10 +69,70 @@ export class MundialitoBoardEntry extends MundialitoPlayer {
   run!: MundialitoRun;
 }
 
+/** Los números del mundialito entero. */
+export class MundialitoGlobalSummary {
+  /** Corridas terminadas. La que se está jugando no cuenta. */
+  runsEnded!: number;
+  titles!: number;
+  /** titles / runsEnded. Ganar un mundialito es raro y este número lo dice. */
+  coronationRate!: number | null;
+  qualified!: number;
+  qualifiedRate!: number | null;
+  avgRunLength!: number | null;
+  /** Jugadores con al menos una corrida terminada. */
+  players!: number;
+  aliveNow!: number;
+  /** De los vivos, cuántos ya están en eliminación directa. */
+  inKnockoutNow!: number;
+  perfectRuns!: number;
+}
+
+/** Una fila de la tabla de rendimiento histórico. */
+export class MundialitoPerformance extends MundialitoPlayer {
+  position!: number;
+  runsPlayed!: number;
+  runsEnded!: number;
+  qualified!: number;
+  /** null cuando no terminó ninguna corrida: no hay porcentaje que calcular. */
+  qualifiedRate!: number | null;
+  avgRunLength!: number | null;
+  koPlayed!: number;
+  koPassed!: number;
+  koRate!: number | null;
+  semis!: number;
+  finals!: number;
+  titles!: number;
+  bestSlot!: number;
+  /** Corridas terminadas seguidas sin pasar de grupos. */
+  droughtRuns!: number;
+}
+
+export const MundialitoRecordKind = {
+  /** Ocho partidos, ocho victorias. */
+  PERFECT_RUN: 'PERFECT_RUN',
+  /** El que más lejos llegó sin dar nunca la vuelta. */
+  ETERNAL_CANDIDATE: 'ETERNAL_CANDIDATE',
+} as const;
+export type MundialitoRecordKind =
+  (typeof MundialitoRecordKind)[keyof typeof MundialitoRecordKind];
+
+export class MundialitoRecord {
+  kind!: MundialitoRecordKind;
+  playerId!: number;
+  displayName!: string;
+  photo!: string | null;
+  value!: number;
+}
+
 /** La pantalla completa del mundialito. */
 export class MundialitoBoard {
   medalWinners!: MundialitoMedal[];
   board!: MundialitoBoardEntry[];
+  summary!: MundialitoGlobalSummary;
+  performance!: MundialitoPerformance[];
+  /** El cementerio: en qué fase se muere el grupo entero. */
+  eliminationsByPhase!: MundialitoPhaseEliminations[];
+  records!: MundialitoRecord[];
 }
 
 /** Cuantas veces se murio un jugador en cada fase. */
@@ -93,6 +153,45 @@ export class MundialitoSummary {
   eliminations!: number;
   /** Puesto mas alto que jugo alguna vez. 8 significa que jugo una final. */
   bestSlot!: number;
+
+  /** Corridas terminadas. Es el denominador de los porcentajes de abajo. */
+  runsEnded!: number;
+  qualified!: number;
+  qualifiedRate!: number | null;
+  avgRunLength!: number | null;
+  koPlayed!: number;
+  koPassed!: number;
+  koRate!: number | null;
+  semis!: number;
+  finals!: number;
+  /** Corridas terminadas seguidas sin pasar de grupos. */
+  droughtRuns!: number;
+  perfectRuns!: number;
+}
+
+export const MundialitoHighlightKind = {
+  /** El que más veces estaba enfrente cuando este jugador quedó afuera. */
+  NEMESIS: 'NEMESIS',
+  /** A quien dejó afuera más veces. */
+  VICTIM: 'VICTIM',
+} as const;
+export type MundialitoHighlightKind =
+  (typeof MundialitoHighlightKind)[keyof typeof MundialitoHighlightKind];
+
+/**
+ * Verdugo y víctima del mundialito.
+ *
+ * Ojo con leerlo como un duelo: acá no se pierde contra una persona sino contra
+ * un equipo, así que `times` es "estaba del otro lado", no "te ganó él".
+ * `played` son los cruces totales, para que el número se pueda leer sobre algo.
+ */
+export class MundialitoHighlight {
+  kind!: MundialitoHighlightKind;
+  playerId!: number;
+  displayName!: string;
+  photo!: string | null;
+  times!: number;
+  played!: number;
 }
 
 /** Todo lo que el perfil necesita del mundialito. */
@@ -101,4 +200,6 @@ export class PlayerMundialito {
   /** null si el jugador todavia no jugo ningun partido elegible. */
   current!: MundialitoRun | null;
   eliminationsByPhase!: MundialitoPhaseEliminations[];
+  /** Cero, una o dos filas: no siempre hay rival que supere el mínimo. */
+  highlights!: MundialitoHighlight[];
 }
