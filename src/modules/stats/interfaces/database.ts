@@ -1,0 +1,263 @@
+import type { Row } from '../../../database/database.types';
+import type { EntityState } from '../../../common/enums/entity-state.enum';
+import type { MatchResult } from '../../matches/enums/match-result.enum';
+import type { PlayerChampionship } from '../../players/entities/player.entity';
+import type { Team } from '../../teams/enums/team.enum';
+import type { TournamentState } from '../../tournaments/enums/tournament-state.enum';
+import type { StatHighlightKind } from '../enums/stat-highlight-kind.enum';
+
+// ─────────────────────────── GetPlayerStats ──────────────────────────────────
+// El orden de estas interfaces ES el orden de los result sets del SP. Ver el
+// encabezado de database/procedures/stats.sql.
+
+export interface PlayerStatsSummaryFields {
+  playerId: number;
+  displayName: string;
+  firstName: string;
+  secondName: string;
+  nickname: string | null;
+  photo: string | null;
+  state: EntityState;
+  isSagrado: boolean;
+  createdAt: Date;
+  cups: number;
+  championships: PlayerChampionship[];
+  /** null si todavia no jugo: no esta en la tabla historica. */
+  position: number | null;
+  tournamentsPlayed: number;
+  played: number;
+  won: number;
+  drew: number;
+  lost: number;
+  goalsDiference: number;
+  points: number;
+  maxPoints: number;
+  winRate: number | null;
+  penalty: number;
+  netPoints: number;
+  debutTournamentId: number | null;
+  debutTournamentName: string | null;
+}
+
+export interface PlayerTournamentStatFields {
+  tournamentId: number;
+  tournamentName: string;
+  tournamentState: TournamentState;
+  wasTracked: boolean;
+  startedAt: Date;
+  position: number;
+  played: number;
+  won: number;
+  drew: number;
+  lost: number;
+  goalsDiference: number;
+  points: number;
+  maxPoints: number;
+  winRate: number | null;
+  penalty: number;
+  netPoints: number;
+  isChampion: boolean;
+}
+
+export interface WinRateSeriesPointFields {
+  matchNumber: number;
+  matchId: number;
+  tournamentId: number;
+  tournamentName: string;
+  playedAt: Date;
+  result: MatchResult;
+  goalsDiference: number;
+  winRate: number;
+}
+
+export interface RivalStatFields {
+  playerId: number;
+  displayName: string;
+  photo: string | null;
+  played: number;
+  won: number;
+  drew: number;
+  lost: number;
+  balance: number;
+  winRate: number;
+}
+
+export interface PartnerStatFields {
+  playerId: number;
+  displayName: string;
+  photo: string | null;
+  played: number;
+  won: number;
+  drew: number;
+  lost: number;
+  winRate: number;
+}
+
+export interface StatHighlightFields {
+  kind: StatHighlightKind;
+  playerId: number;
+  displayName: string;
+  photo: string | null;
+  played: number;
+  won: number;
+  drew: number;
+  lost: number;
+  /** null en los destacados de quimica: un companiero no tiene saldo. */
+  balance: number | null;
+  winRate: number;
+}
+
+export interface TeamDistributionFields {
+  team: Team;
+  isDerbyTeam: boolean;
+  played: number;
+  won: number;
+  drew: number;
+  lost: number;
+  winRate: number;
+}
+
+// ─────────────────────────── GetTournamentStats ───────────────────────────────
+
+export interface TournamentStatsSummaryFields {
+  tournamentId: number;
+  tournamentName: string;
+  state: TournamentState;
+  wasTracked: boolean;
+  startedAt: Date;
+  endedAt: Date;
+  matches: number;
+  derbies: number;
+  draws: number;
+  players: number;
+  totalGoalsDiference: number;
+  avgGoalsDiference: number | null;
+  avgPlayersPerMatch: number | null;
+  firstMatchAt: Date | null;
+  lastMatchAt: Date | null;
+  championPlayerId: number | null;
+  championName: string | null;
+}
+
+export interface TeamPerformanceFields {
+  team: Team;
+  isDerbyTeam: boolean;
+  played: number;
+  won: number;
+  drew: number;
+  lost: number;
+  winRate: number;
+  goalsDiference: number;
+}
+
+export interface HeadToHeadFields {
+  teamA: Team;
+  teamB: Team;
+  isDerby: boolean;
+  matches: number;
+  winsA: number;
+  winsB: number;
+  draws: number;
+  winRateA: number;
+  winRateB: number;
+  avgGoalsDiference: number | null;
+}
+
+export interface MatchesByPlaceFields {
+  place: string;
+  matches: number;
+  avgGoalsDiference: number | null;
+}
+
+export interface MatchTimelinePointFields {
+  matchId: number;
+  playedAt: Date;
+  place: string;
+  winnerTeam: Team | null;
+  goalsDiference: number;
+  isDerby: boolean;
+  squadSize: number;
+}
+
+// ─────────────────────────── GetGeneralStats ──────────────────────────────────
+
+export interface GeneralStatsSummaryFields {
+  players: number;
+  activePlayers: number;
+  sagradoPlayers: number;
+  tournaments: number;
+  finishedTournaments: number;
+  matches: number;
+  derbies: number;
+  draws: number;
+  totalGoalsDiference: number | null;
+  avgGoalsDiference: number | null;
+  firstMatchAt: Date | null;
+  lastMatchAt: Date | null;
+  appearances: number;
+  avgPlayersPerMatch: number | null;
+}
+
+export interface ChampionRankFields {
+  playerId: number;
+  displayName: string;
+  photo: string | null;
+  cups: number;
+  championships: PlayerChampionship[];
+}
+
+export interface TournamentTimelinePointFields {
+  tournamentId: number;
+  tournamentName: string;
+  startedAt: Date;
+  endedAt: Date;
+  state: TournamentState;
+  wasTracked: boolean;
+  matchesCount: number;
+  derbiesCount: number;
+  playersCount: number;
+  championPlayerId: number | null;
+  championName: string | null;
+}
+
+export interface TopWinRateFields {
+  position: number;
+  playerId: number;
+  displayName: string;
+  photo: string | null;
+  cups: number;
+  played: number;
+  won: number;
+  drew: number;
+  lost: number;
+  winRate: number | null;
+  netPoints: number;
+}
+
+export interface RecordsFields {
+  biggestWinMargin: number | null;
+  biggestWinMatchId: number | null;
+  biggestSquad: number | null;
+  mostMatchesPlayed: number | null;
+  mostCups: number | null;
+}
+
+// ─────────────────────────── Filas crudas ─────────────────────────────────────
+
+export interface PlayerStatsSummaryDB extends Row, PlayerStatsSummaryFields {}
+export interface PlayerTournamentStatDB extends Row, PlayerTournamentStatFields {}
+export interface WinRateSeriesPointDB extends Row, WinRateSeriesPointFields {}
+export interface RivalStatDB extends Row, RivalStatFields {}
+export interface PartnerStatDB extends Row, PartnerStatFields {}
+export interface StatHighlightDB extends Row, StatHighlightFields {}
+export interface TeamDistributionDB extends Row, TeamDistributionFields {}
+export interface TournamentStatsSummaryDB extends Row, TournamentStatsSummaryFields {}
+export interface TeamPerformanceDB extends Row, TeamPerformanceFields {}
+export interface HeadToHeadDB extends Row, HeadToHeadFields {}
+export interface MatchesByPlaceDB extends Row, MatchesByPlaceFields {}
+export interface MatchTimelinePointDB extends Row, MatchTimelinePointFields {}
+export interface GeneralStatsSummaryDB extends Row, GeneralStatsSummaryFields {}
+export interface ChampionRankDB extends Row, ChampionRankFields {}
+export interface TournamentTimelinePointDB extends Row, TournamentTimelinePointFields {}
+export interface TopWinRateDB extends Row, TopWinRateFields {}
+export interface RecordsDB extends Row, RecordsFields {}

@@ -1,0 +1,56 @@
+/**
+ * Codigos de error de la aplicacion.
+ *
+ * Son la clave de i18n del frontend: la API responde `errorCode` y el cliente
+ * decide en que idioma lo dice. Por eso el `message` de la respuesta es
+ * secundario (util para logs y para curl) y el codigo es el contrato.
+ *
+ * Separados de NativeErrorCode (database.errors.ts), que son el fallback para
+ * errores nativos de MySQL que se escapan sin que el SP los catchee.
+ *
+ * Convencion de nombres: MODULO_DESCRIPCION.
+ */
+export const AppErrorCode = {
+  // ── Common ──
+  VALIDATION_FAILED: 'VALIDATION_FAILED',
+
+  // ── Auth ──
+  AUTH_INVALID_PASSWORD: 'AUTH_INVALID_PASSWORD',
+  AUTH_TOKEN_MISSING: 'AUTH_TOKEN_MISSING',
+  AUTH_TOKEN_INVALID: 'AUTH_TOKEN_INVALID',
+  AUTH_TOKEN_EXPIRED: 'AUTH_TOKEN_EXPIRED',
+
+  // ── Players ──
+  PLAYER_NOT_FOUND: 'PLAYER_NOT_FOUND',
+  PLAYER_ALREADY_IN_STATE: 'PLAYER_ALREADY_IN_STATE',
+  PLAYER_MUST_BE_INACTIVE: 'PLAYER_MUST_BE_INACTIVE',
+  PLAYER_HAS_HISTORY: 'PLAYER_HAS_HISTORY',
+
+  // ── Tournaments ──
+  TOURNAMENT_NOT_FOUND: 'TOURNAMENT_NOT_FOUND',
+  TOURNAMENT_ALREADY_IN_STATE: 'TOURNAMENT_ALREADY_IN_STATE',
+  TOURNAMENT_NOT_PLAYING: 'TOURNAMENT_NOT_PLAYING',
+  TOURNAMENT_HAS_HISTORY: 'TOURNAMENT_HAS_HISTORY',
+  TOURNAMENT_NAME_ALREADY_EXISTS: 'TOURNAMENT_NAME_ALREADY_EXISTS',
+  TOURNAMENT_INVALID_DATES: 'TOURNAMENT_INVALID_DATES',
+  TOURNAMENT_TRACKING_LOCKED: 'TOURNAMENT_TRACKING_LOCKED',
+
+  // ── Matches ──
+  MATCH_NOT_FOUND: 'MATCH_NOT_FOUND',
+  MATCH_INVALID_LINEUP: 'MATCH_INVALID_LINEUP',
+  MATCH_INVALID_TEAMS: 'MATCH_INVALID_TEAMS',
+  MATCH_WINNER_NOT_IN_MATCH: 'MATCH_WINNER_NOT_IN_MATCH',
+  MATCH_INVALID_RESULT: 'MATCH_INVALID_RESULT',
+  MATCH_DUPLICATED_PLAYER: 'MATCH_DUPLICATED_PLAYER',
+  MATCH_PLAYER_INACTIVE: 'MATCH_PLAYER_INACTIVE',
+
+  // ── Penalties ──
+  PENALTY_NOT_FOUND: 'PENALTY_NOT_FOUND',
+  PENALTY_ALREADY_EXISTS: 'PENALTY_ALREADY_EXISTS',
+  PENALTY_INVALID_VALUE: 'PENALTY_INVALID_VALUE',
+
+  // ── Teams ──
+  TEAM_NOT_FOUND: 'TEAM_NOT_FOUND',
+} as const;
+
+export type AppErrorCodeValue = (typeof AppErrorCode)[keyof typeof AppErrorCode];

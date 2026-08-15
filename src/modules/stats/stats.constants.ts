@@ -1,0 +1,1 @@
+export const STATS_REPOSITORY = 'STATS_REPOSITORY';

@@ -1,0 +1,1 @@
+export const TEAMS_REPOSITORY = 'TEAMS_REPOSITORY';
