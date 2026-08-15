@@ -21,9 +21,14 @@
 --   5. eliminations  en que fase se muere el grupo entero
 --   6. records       los destacados: mundialito perfecto y eterno candidato
 --
--- El medallero desempata por fecha del primer titulo, igual que la vitrina de
--- torneos: entre dos jugadores con una copa, la tuvo defendiendo mas tiempo el
--- que la gano antes.
+-- El medallero desempata en este orden: titulos, subcampeonatos, semifinales y
+-- antiguedad del primer titulo. Es la escalera natural del torneo —cuantas
+-- veces lo ganaste, cuantas te quedaste en la puerta, cuantas llegaste entre
+-- los cuatro— y recien cuando todo eso empata manda quien lo consiguio antes,
+-- igual que en la vitrina de torneos.
+--
+-- Subcampeonatos = finales jugadas menos ganadas. La final se gana ganando o
+-- empatando, asi que toda final que no termino en copa fue una derrota.
 --
 -- El orden del board cuenta una carrera: primero el campeon vigente, despues
 -- los que siguen vivos por lo lejos que llegaron, y al final los eliminados
@@ -36,7 +41,11 @@ BEGIN
     -- ── 1. medalWinners ───────────────────────────────────────────────────────
     SELECT
         CAST(ROW_NUMBER() OVER (
-            ORDER BY t.titles DESC, t.firstTitleAt ASC, t.playerId ASC
+            ORDER BY t.titles DESC,
+                     (s.finals - s.titles) DESC,
+                     s.semis DESC,
+                     t.firstTitleAt ASC,
+                     t.playerId ASC
         ) AS SIGNED) AS `position`,
         t.playerId,
         p.displayName,
@@ -46,10 +55,13 @@ BEGIN
         p.isSagrado,
         p.cups,
         t.titles,
+        CAST(s.finals - s.titles AS SIGNED) AS runnerUps,
+        s.semis,
         t.firstTitleAt,
         t.lastTitleAt
     FROM vMundialitoTitles t
-    INNER JOIN vPlayerDetail p ON p.playerId = t.playerId
+    INNER JOIN vPlayerDetail        p ON p.playerId = t.playerId
+    INNER JOIN vMundialitoPlayerStats s ON s.playerId = t.playerId
     ORDER BY `position`;
 
     -- ── 2. board ──────────────────────────────────────────────────────────────
@@ -194,6 +206,7 @@ DELIMITER ;
 --   2. current               su mundialito vigente (0 filas si nunca jugo)
 --   3. eliminationsByPhase   en que fase se muere, con las seis fases siempre presentes
 --   4. highlights            verdugo y victima del mundialito (0, 1 o 2 filas)
+--   5. bestRun               el mejor mundialito que corrio (0 o 1 fila)
 --
 -- Un jugador recien creado tiene que abrir su perfil igual: el summary sale en
 -- cero por el LEFT JOIN, current viene vacio y las barras salen todas en cero.
@@ -349,5 +362,23 @@ BEGIN
         ORDER BY COUNT(*) DESC, c.played ASC, p.displayName
         LIMIT 1
     );
+
+    -- ── 5. bestRun ────────────────────────────────────────────────────────────
+    -- El mejor mundialito que corrio: ganado antes que largo, largo antes que
+    -- puntudo. Ver vMundialitoBestRun.
+    SELECT
+        b.playerId,
+        b.runIndex,
+        b.played,
+        b.groupPoints,
+        b.points,
+        b.status,
+        b.phase,
+        b.nextSlot,
+        b.firstPlayedAt,
+        b.lastPlayedAt,
+        b.balls
+    FROM vMundialitoBestRun b
+    WHERE b.playerId = pPlayerId;
 END //
 DELIMITER ;

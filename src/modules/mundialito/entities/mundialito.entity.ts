@@ -1,5 +1,6 @@
 import { EntityState } from '../../../common/enums/entity-state.enum';
 import { MatchResult } from '../../matches/enums/match-result.enum';
+import { Team } from '../../teams/enums/team.enum';
 import { MundialitoPhase, MundialitoStatus } from '../enums/mundialito.enums';
 
 /**
@@ -16,6 +17,11 @@ export class MundialitoBall {
   /** Puntos del mundialito: 3, 1 o 0. No depende de la puntuacion del torneo. */
   points!: number;
   matchId!: number;
+  /** ISO con Z, ya formateada en la vista: adentro del JSON no hay typeCast. */
+  playedAt!: string;
+  /** Diferencia de gol del partido, con signo desde este jugador. */
+  goalsDiference!: number;
+  team!: Team;
 }
 
 /**
@@ -33,11 +39,14 @@ export class MundialitoRun {
   played!: number;
   /** Puntos sumados en la fase de grupos. Se congela al clasificar. */
   groupPoints!: number;
+  /** Puntos de toda la corrida. Es el desempate del mejor mundialito. */
+  points!: number;
   status!: MundialitoStatus;
   /** Fase del ultimo partido jugado. */
   phase!: MundialitoPhase;
   /** Puesto que va a ocupar el proximo partido; 1 si la corrida ya cerro. */
   nextSlot!: number;
+  firstPlayedAt!: Date;
   lastPlayedAt!: Date;
   balls!: MundialitoBall[];
 }
@@ -58,6 +67,10 @@ export class MundialitoPlayer {
 export class MundialitoMedal extends MundialitoPlayer {
   position!: number;
   titles!: number;
+  /** Finales perdidas: se gana ganando o empatando, asi que el resto son derrotas. */
+  runnerUps!: number;
+  /** Semifinales jugadas. Es el tercer escalon del desempate. */
+  semis!: number;
   /** Desempate del medallero: primero el que lo consiguio antes. */
   firstTitleAt!: Date;
   lastTitleAt!: Date;
@@ -202,4 +215,10 @@ export class PlayerMundialito {
   eliminationsByPhase!: MundialitoPhaseEliminations[];
   /** Cero, una o dos filas: no siempre hay rival que supere el mínimo. */
   highlights!: MundialitoHighlight[];
+  /**
+   * El mejor mundialito que corrió: ganado antes que largo, largo antes que
+   * puntudo. null si nunca jugó. Puede ser el mismo que `current`, y está bien:
+   * si el mejor que hizo es el que está jugando, esa es la respuesta.
+   */
+  bestRun!: MundialitoRun | null;
 }

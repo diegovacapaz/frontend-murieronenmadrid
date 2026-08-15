@@ -390,7 +390,9 @@ LEFT JOIN vPlayerDetail cp        ON cp.playerId     = ch.playerId;
 -- La cadena es:
 --   vMundialitoMatches   partidos elegibles, numerados por jugador
 --   vMundialitoRuns      + en que mundialito, en que puesto y como termino
---   vMundialitoCurrent   el mundialito vigente de cada jugador, listo para pintar
+--   vMundialitoRunBalls  cada corrida con sus partidos armados para pintar
+--   vMundialitoCurrent   el mundialito vigente de cada jugador
+--   vMundialitoBestRun   el mejor que corrio cada uno
 --   vMundialitoTitles    cuantos gano cada uno y cuando gano el primero
 -- =============================================================================
 
@@ -678,33 +680,40 @@ WHERE r.outcome = 'CHAMPION'
 GROUP BY r.playerId;
 
 -- -----------------------------------------------------------------------------
--- vMundialitoCurrent — el mundialito vigente de cada jugador
+-- vMundialitoRunBalls — cada mundialito, con sus partidos listos para pintar
 -- -----------------------------------------------------------------------------
--- Vigente es el de mayor runIndex, este abierto o cerrado: un jugador que quedo
--- eliminado sigue mostrando ESA corrida —con su pelota roja— hasta que juegue
--- otro partido y arranque la siguiente. Lo mismo el campeon.
+-- Una fila por corrida (terminada o en curso) con sus partidos armados como
+-- JSON. Las dos vistas que siguen solo eligen cual mostrar: la vigente o la
+-- mejor. El armado esta aca una sola vez porque son la misma tarjeta.
 --
--- balls viaja como JSON con un objeto por partido jugado; las que faltan hasta
--- ocho las dibuja el frontend en gris. Se arma aca por la misma razon que en
--- vMatchDetail: un solo result set en vez de una consulta por jugador.
-CREATE OR REPLACE VIEW vMundialitoCurrent AS
+-- Cada pelota lleva de donde salio —fecha, diferencia con signo, equipo— para
+-- que al pasar el mouse se pueda contar el partido sin ir a buscarlo. Esos tres
+-- datos no viajan por el CTE recursivo: se cruzan despues contra
+-- vMatchPlayerResults, que ya los tiene resueltos desde el punto de vista del
+-- jugador.
+--
+-- El desenlace de la corrida es el del ultimo partido: los anteriores son todos
+-- ALIVE por construccion.
+CREATE OR REPLACE VIEW vMundialitoRunBalls AS
 SELECT
-  cur.playerId,
-  cur.runIndex,
-  cur.played,
-  cur.groupPoints,
-  cur.status,
-  cur.lastPlayedAt,
+  agg.playerId,
+  agg.runIndex,
+  agg.played,
+  agg.groupPoints,
+  agg.points,
+  agg.status,
+  agg.firstPlayedAt,
+  agg.lastPlayedAt,
   -- Puesto que va a ocupar el proximo partido: el que sigue si esta vivo, y el
   -- 1 del mundialito nuevo si la corrida ya cerro.
-  CAST(CASE WHEN cur.status = 'ALIVE' THEN cur.played + 1 ELSE 1 END AS SIGNED) AS nextSlot,
+  CAST(CASE WHEN agg.status = 'ALIVE' THEN agg.played + 1 ELSE 1 END AS SIGNED) AS nextSlot,
   -- Fase en la que quedo la corrida: la del ultimo partido jugado.
   CASE
-    WHEN cur.played <= 3 THEN 'GROUP'
-    WHEN cur.played = 4  THEN 'R16'
-    WHEN cur.played = 5  THEN 'R8'
-    WHEN cur.played = 6  THEN 'R4'
-    WHEN cur.played = 7  THEN 'SF'
+    WHEN agg.played <= 3 THEN 'GROUP'
+    WHEN agg.played = 4  THEN 'R16'
+    WHEN agg.played = 5  THEN 'R8'
+    WHEN agg.played = 6  THEN 'R4'
+    WHEN agg.played = 7  THEN 'SF'
     ELSE 'F'
   END AS phase,
   balls.balls
@@ -712,47 +721,105 @@ FROM (
   SELECT
     r.playerId,
     r.runIndex,
-    CAST(COUNT(*) AS SIGNED)  AS played,
-    MAX(r.groupPoints)        AS groupPoints,
-    MAX(r.playedAt)           AS lastPlayedAt,
-    -- El desenlace de la corrida es el del ultimo partido: los anteriores son
-    -- todos ALIVE por construccion.
+    CAST(COUNT(*)         AS SIGNED) AS played,
+    CAST(MAX(r.groupPoints) AS SIGNED) AS groupPoints,
+    CAST(SUM(r.points)    AS SIGNED) AS points,
+    MIN(r.playedAt)                  AS firstPlayedAt,
+    MAX(r.playedAt)                  AS lastPlayedAt,
     SUBSTRING_INDEX(
       GROUP_CONCAT(r.outcome ORDER BY r.slot DESC SEPARATOR ','), ',', 1
     ) AS status
   FROM vMundialitoRuns r
-  INNER JOIN (
-    SELECT playerId, MAX(runIndex) AS runIndex
-    FROM vMundialitoRuns
-    GROUP BY playerId
-  ) last
-    ON last.playerId = r.playerId
-   AND last.runIndex = r.runIndex
   GROUP BY r.playerId, r.runIndex
-) cur
+) agg
 LEFT JOIN (
   SELECT
     ordered.playerId,
+    ordered.runIndex,
     JSON_ARRAYAGG(
       JSON_OBJECT(
-        'slot',    ordered.slot,
-        'phase',   ordered.phase,
-        'result',  ordered.result,
-        'points',  ordered.points,
-        'matchId', ordered.matchId
+        'slot',           ordered.slot,
+        'phase',          ordered.phase,
+        'result',         ordered.result,
+        'points',         ordered.points,
+        'matchId',        ordered.matchId,
+        -- Formateada a mano y no como DATETIME: adentro de un JSON la fecha no
+        -- pasa por el typeCast del pool, asi que saldria "2026-04-06 12:00:00",
+        -- que Safari no parsea. Este es el mismo ISO con Z que produce el
+        -- typeCast para las columnas de fecha normales.
+        'playedAt',       DATE_FORMAT(ordered.playedAt, '%Y-%m-%dT%H:%i:%sZ'),
+        'goalsDiference', ordered.goalsDiference,
+        'team',           ordered.team
       )
     ) AS balls
   FROM (
-    SELECT r.playerId, r.slot, r.phase, r.result, r.points, r.matchId
+    SELECT
+      r.playerId, r.runIndex, r.slot, r.phase, r.result, r.points, r.matchId,
+      r.playedAt,
+      m.goalsDiference,
+      m.team
     FROM vMundialitoRuns r
-    INNER JOIN (
-      SELECT playerId, MAX(runIndex) AS runIndex
-      FROM vMundialitoRuns
-      GROUP BY playerId
-    ) last
-      ON last.playerId = r.playerId
-     AND last.runIndex = r.runIndex
-    ORDER BY r.playerId, r.slot
+    INNER JOIN vMatchPlayerResults m
+      ON m.playerId = r.playerId
+     AND m.matchId  = r.matchId
+    ORDER BY r.playerId, r.runIndex, r.slot
   ) ordered
-  GROUP BY ordered.playerId
-) balls ON balls.playerId = cur.playerId;
+  GROUP BY ordered.playerId, ordered.runIndex
+) balls
+  ON balls.playerId = agg.playerId
+ AND balls.runIndex = agg.runIndex;
+
+-- -----------------------------------------------------------------------------
+-- vMundialitoCurrent — el mundialito vigente de cada jugador
+-- -----------------------------------------------------------------------------
+-- Vigente es el de mayor runIndex, este abierto o cerrado: un jugador que quedo
+-- eliminado sigue mostrando ESA corrida —con su pelota roja— hasta que juegue
+-- otro partido y arranque la siguiente. Lo mismo el campeon.
+CREATE OR REPLACE VIEW vMundialitoCurrent AS
+SELECT b.*
+FROM vMundialitoRunBalls b
+INNER JOIN (
+  SELECT playerId, MAX(runIndex) AS runIndex
+  FROM vMundialitoRunBalls
+  GROUP BY playerId
+) last
+  ON last.playerId = b.playerId
+ AND last.runIndex = b.runIndex;
+
+-- -----------------------------------------------------------------------------
+-- vMundialitoBestRun — el mejor mundialito que corrio cada jugador
+-- -----------------------------------------------------------------------------
+-- Mejor es, en este orden: haberlo ganado, haber llegado mas lejos, y haber
+-- sacado mas puntos en el camino.
+--
+-- El titulo va primero y no despues de la cantidad de partidos porque una final
+-- perdida tambien llega a ocho: sin esa prioridad, un subcampeon con siete
+-- victorias le ganaria al campeon que empato dos en el camino, y "mi mejor
+-- mundialito" pasaria a ser uno que perdio.
+--
+-- Entra tambien la corrida en curso: si el mejor que hizo es el que esta
+-- jugando ahora, esa es la respuesta honesta.
+CREATE OR REPLACE VIEW vMundialitoBestRun AS
+SELECT
+  ranked.playerId,
+  ranked.runIndex,
+  ranked.played,
+  ranked.groupPoints,
+  ranked.points,
+  ranked.status,
+  ranked.firstPlayedAt,
+  ranked.lastPlayedAt,
+  ranked.nextSlot,
+  ranked.phase,
+  ranked.balls
+FROM (
+  SELECT
+    b.*,
+    ROW_NUMBER() OVER (
+      PARTITION BY b.playerId
+      ORDER BY (b.status = 'CHAMPION') DESC, b.played DESC, b.points DESC,
+               b.runIndex DESC
+    ) AS rn
+  FROM vMundialitoRunBalls b
+) ranked
+WHERE ranked.rn = 1;

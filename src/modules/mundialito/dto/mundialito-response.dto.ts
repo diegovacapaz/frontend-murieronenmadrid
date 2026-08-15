@@ -1,6 +1,7 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { EntityState } from '../../../common/enums/entity-state.enum';
 import { MatchResult } from '../../matches/enums/match-result.enum';
+import { Team } from '../../teams/enums/team.enum';
 import {
   MundialitoHighlightKind,
   MundialitoRecordKind,
@@ -22,6 +23,15 @@ export class MundialitoBallDto {
 
   @ApiProperty()
   matchId!: number;
+
+  @ApiProperty({ description: 'ISO con Z, formateada en la vista.' })
+  playedAt!: string;
+
+  @ApiProperty({ description: 'Diferencia de gol con signo desde este jugador.' })
+  goalsDiference!: number;
+
+  @ApiProperty({ enum: Team })
+  team!: Team;
 }
 
 export class MundialitoRunDto {
@@ -36,6 +46,12 @@ export class MundialitoRunDto {
 
   @ApiProperty({ description: 'Puntos de la fase de grupos. Se congela al clasificar.' })
   groupPoints!: number;
+
+  @ApiProperty({ description: 'Puntos de toda la corrida.' })
+  points!: number;
+
+  @ApiProperty()
+  firstPlayedAt!: Date;
 
   @ApiProperty({ enum: MundialitoStatus })
   status!: MundialitoStatus;
@@ -83,7 +99,13 @@ export class MundialitoMedalDto extends MundialitoPlayerDto {
   @ApiProperty({ description: 'Mundialitos ganados.' })
   titles!: number;
 
-  @ApiProperty({ description: 'Desempate del medallero: primero el que lo logro antes.' })
+  @ApiProperty({ description: 'Finales perdidas.' })
+  runnerUps!: number;
+
+  @ApiProperty({ description: 'Semifinales jugadas.' })
+  semis!: number;
+
+  @ApiProperty({ description: 'Ultimo escalon del desempate: quien lo consiguio antes.' })
   firstTitleAt!: Date;
 
   @ApiProperty()
@@ -326,4 +348,12 @@ export class PlayerMundialitoResponseDto {
     description: 'Verdugo y victima. Cero, una o dos filas segun quien supere el minimo.',
   })
   highlights!: MundialitoHighlightDto[];
+
+  @ApiPropertyOptional({
+    type: MundialitoRunDto,
+    nullable: true,
+    description:
+      'El mejor mundialito que corrio: ganado antes que largo, largo antes que puntudo.',
+  })
+  bestRun!: MundialitoRunDto | null;
 }

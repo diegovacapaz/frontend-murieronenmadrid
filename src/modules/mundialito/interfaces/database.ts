@@ -1,19 +1,24 @@
 import type { EntityState } from '../../../common/enums/entity-state.enum';
 import type { Row } from '../../../database/database.types';
 import type { MatchResult } from '../../matches/enums/match-result.enum';
+import type { Team } from '../../teams/enums/team.enum';
 import type {
   MundialitoHighlightKind,
   MundialitoRecordKind,
 } from '../entities/mundialito.entity';
 import type { MundialitoPhase, MundialitoStatus } from '../enums/mundialito.enums';
 
-/** Cada objeto del JSON `balls` que arma vMundialitoCurrent. */
+/** Cada objeto del JSON `balls` que arma vMundialitoRunBalls. */
 export interface MundialitoBallJson {
   slot: number;
   phase: MundialitoPhase;
   result: MatchResult;
   points: number;
   matchId: number;
+  /** Ya viene como ISO con Z: la vista la formatea porque el JSON no pasa por typeCast. */
+  playedAt: string;
+  goalsDiference: number;
+  team: Team;
 }
 
 /** Columnas del jugador que traen los dos SPs. */
@@ -27,14 +32,16 @@ interface MundialitoPlayerFields {
   cups: number;
 }
 
-/** Columnas de la corrida vigente. `balls` llega ya parseado por el typeCast. */
+/** Columnas de una corrida. `balls` llega ya parseado por el typeCast. */
 interface MundialitoRunFields {
   runIndex: number;
   played: number;
   groupPoints: number;
+  points: number;
   status: MundialitoStatus;
   phase: MundialitoPhase;
   nextSlot: number;
+  firstPlayedAt: Date;
   lastPlayedAt: Date;
   balls: MundialitoBallJson[] | null;
 }
@@ -42,6 +49,8 @@ interface MundialitoRunFields {
 export interface MundialitoMedalDB extends Row, MundialitoPlayerFields {
   position: number;
   titles: number;
+  runnerUps: number;
+  semis: number;
   firstTitleAt: Date;
   lastTitleAt: Date;
 }

@@ -214,7 +214,8 @@ vMundialitoRuns           + mundialito, puesto, fase y desenlace (CTE recursivo)
 vMundialitoEndedRuns      las corridas ya cerradas: base de toda estadística
 vMundialitoPlayerStats    rendimiento por jugador (clasificación, mata-mata, sequía)
 vMundialitoKnockouts      quién estaba enfrente en cada eliminación
-vMundialitoCurrent        la corrida vigente de cada uno, con sus pelotas en JSON
+vMundialitoRunBalls       cada corrida con sus partidos armados en JSON
+vMundialitoCurrent        la vigente de cada uno · vMundialitoBestRun la mejor
 vMundialitoTitles         cuántos ganó cada uno y cuándo ganó el primero
 ```
 

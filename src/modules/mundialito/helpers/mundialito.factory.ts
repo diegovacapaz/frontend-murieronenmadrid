@@ -42,6 +42,8 @@ export class MundialitoFactory {
     medal.isSagrado = db.isSagrado;
     medal.cups = db.cups;
     medal.titles = db.titles;
+    medal.runnerUps = db.runnerUps;
+    medal.semis = db.semis;
     medal.firstTitleAt = db.firstTitleAt;
     medal.lastTitleAt = db.lastTitleAt;
     return medal;
@@ -184,9 +186,11 @@ export class MundialitoFactory {
     run.runIndex = db.runIndex;
     run.played = db.played;
     run.groupPoints = db.groupPoints;
+    run.points = db.points;
     run.status = db.status;
     run.phase = db.phase;
     run.nextSlot = db.nextSlot;
+    run.firstPlayedAt = db.firstPlayedAt;
     run.lastPlayedAt = db.lastPlayedAt;
     run.balls = MundialitoFactory.toBalls(db.balls);
     return run;
@@ -202,6 +206,9 @@ export class MundialitoFactory {
         ball.result = raw.result;
         ball.points = raw.points;
         ball.matchId = raw.matchId;
+        ball.playedAt = raw.playedAt;
+        ball.goalsDiference = raw.goalsDiference;
+        ball.team = raw.team;
         return ball;
       });
   }

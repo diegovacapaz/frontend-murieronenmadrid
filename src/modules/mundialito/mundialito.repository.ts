@@ -47,14 +47,16 @@ export class MundialitoRepository implements IMundialitoRepository {
   }
 
   async findByPlayer(playerId: number, minAgainst: number): Promise<PlayerMundialito> {
-    const [summary, current, eliminationsByPhase, highlights] = await this.db.callMulti<
-      [
-        MundialitoSummaryDB[],
-        MundialitoCurrentDB[],
-        MundialitoPhaseEliminationsDB[],
-        MundialitoHighlightDB[],
-      ]
-    >('GetPlayerMundialito', [playerId, minAgainst]);
+    const [summary, current, eliminationsByPhase, highlights, bestRun] =
+      await this.db.callMulti<
+        [
+          MundialitoSummaryDB[],
+          MundialitoCurrentDB[],
+          MundialitoPhaseEliminationsDB[],
+          MundialitoHighlightDB[],
+          MundialitoCurrentDB[],
+        ]
+      >('GetPlayerMundialito', [playerId, minAgainst]);
 
     return {
       summary: MundialitoFactory.toSummary(summary[0]),
@@ -62,6 +64,7 @@ export class MundialitoRepository implements IMundialitoRepository {
       current: MundialitoFactory.toCurrent(current[0]),
       eliminationsByPhase: MundialitoFactory.toEliminationsList(eliminationsByPhase),
       highlights: MundialitoFactory.toHighlightList(highlights),
+      bestRun: MundialitoFactory.toCurrent(bestRun[0]),
     };
   }
 }
