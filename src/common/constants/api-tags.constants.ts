@@ -9,4 +9,5 @@ export enum ApiTag {
   TEAMS = 'Teams',
   SCOREBOARD = 'Scoreboard',
   STATS = 'Stats',
+  MUNDIALITO = 'Mundialito',
 }

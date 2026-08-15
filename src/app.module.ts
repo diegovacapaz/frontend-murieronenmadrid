@@ -6,6 +6,7 @@ import { DatabaseModule } from './database/database.module';
 import { GlobalsModule } from './globals/globals.module';
 import { HealthController } from './health.controller';
 import { MatchesModule } from './modules/matches/matches.module';
+import { MundialitoModule } from './modules/mundialito/mundialito.module';
 import { PenaltiesModule } from './modules/penalties/penalties.module';
 import { PlayersModule } from './modules/players/players.module';
 import { ScoreboardModule } from './modules/scoreboard/scoreboard.module';
@@ -31,6 +32,7 @@ import { RealtimeModule } from './realtime/realtime.module';
     TeamsModule,
     ScoreboardModule,
     StatsModule,
+    MundialitoModule,
   ],
   controllers: [HealthController],
   providers: [

@@ -371,3 +371,254 @@ LEFT JOIN (
 ) pe ON pe.tournamentId = t.tournamentId
 LEFT JOIN vTournamentChampions ch ON ch.tournamentId = t.tournamentId
 LEFT JOIN vPlayerDetail cp        ON cp.playerId     = ch.playerId;
+
+-- =============================================================================
+-- MUNDIALITO
+-- =============================================================================
+-- Un torneo paralelo que no existe en ninguna tabla: se deduce del historial.
+-- Cada jugador corre su propio mundial sobre sus partidos en orden cronologico,
+-- sin importar de que torneo sean.
+--
+-- El formato son 8 partidos: tres de fase de grupos y cinco de eliminacion
+-- directa (16avos, 8avos, 4tos, semis, final). Se paga 3 / 1 / 0 —la puntuacion
+-- del torneo NO se usa aca; en el mundialito todos los partidos valen igual—.
+-- Al cerrar el tercer partido hacen falta 4 puntos para pasar de grupos. Desde
+-- los 16avos, perder elimina y empatar alcanza para seguir; la final se gana
+-- ganando o empatando. Al quedar eliminado o al salir campeon, el siguiente
+-- partido que juegue arranca un mundialito nuevo desde la fase de grupos.
+--
+-- La cadena es:
+--   vMundialitoMatches   partidos elegibles, numerados por jugador
+--   vMundialitoRuns      + en que mundialito, en que puesto y como termino
+--   vMundialitoCurrent   el mundialito vigente de cada jugador, listo para pintar
+--   vMundialitoTitles    cuantos gano cada uno y cuando gano el primero
+-- =============================================================================
+
+-- -----------------------------------------------------------------------------
+-- vMundialitoMatches — la secuencia de partidos de cada jugador
+-- -----------------------------------------------------------------------------
+-- Se excluyen los torneos wasTracked = FALSE: de esos solo sobrevivio la tabla
+-- final y sus "partidos" son reconstrucciones para cuadrarla (cinco filas para
+-- todo 2024). Contarlos inventaria fases y eliminaciones que nunca pasaron.
+--
+-- El orden es (playedAt, matchId). La fecha sola alcanzaria hoy —nunca se
+-- jugaron dos partidos el mismo dia— pero el matchId lo deja determinista para
+-- cuando pase.
+CREATE OR REPLACE VIEW vMundialitoMatches AS
+SELECT
+  r.playerId,
+  r.matchId,
+  r.tournamentId,
+  r.playedAt,
+  r.result,
+  CAST(ROW_NUMBER() OVER (
+    PARTITION BY r.playerId
+    ORDER BY r.playedAt, r.matchId
+  ) AS SIGNED) AS n
+FROM vMatchPlayerResults r
+INNER JOIN Tournaments t ON t.tournamentId = r.tournamentId
+WHERE t.wasTracked = TRUE;
+
+-- -----------------------------------------------------------------------------
+-- vMundialitoRuns — cada partido ubicado dentro del mundialito que le tocó
+-- -----------------------------------------------------------------------------
+-- Esto es un plegado con reinicio: el estado de un partido depende del anterior
+-- y no hay forma de expresarlo con una agregacion. Por eso el CTE recursivo,
+-- que recorre la secuencia de cada jugador de a un partido por iteracion (todos
+-- los jugadores avanzan en paralelo, asi que la profundidad es la del historial
+-- mas largo, hoy 60).
+--
+-- Dentro de la recursion viaja lo minimo indispensable —numero de mundialito,
+-- puesto, puntos de grupo y desenlace—; todo lo derivable (la fase, los puntos
+-- del partido) se calcula afuera. Cuanto menos lleve el paso recursivo, menos
+-- lugares donde equivocarse con los tipos.
+--
+-- OJO con los CAST del ancla: en MySQL el tipo de cada columna de un CTE
+-- recursivo lo fija la primera consulta. Sin el CAST a CHAR(8), 'ALIVE' define
+-- un CHAR(5) y 'CHAMPION' entra truncado como 'CHAMP'.
+--
+-- outcome es el estado DESPUES de jugar ese partido:
+--   ALIVE     sigue vivo en su mundialito
+--   OUT       quedo eliminado en ese partido
+--   CHAMPION  gano el mundialito en ese partido
+CREATE OR REPLACE VIEW vMundialitoRuns AS
+WITH RECURSIVE walk AS (
+  -- El primer partido de cada jugador: siempre abre un mundialito y nunca
+  -- elimina, porque el primero de la fase de grupos no define nada.
+  SELECT
+    m.playerId,
+    m.matchId,
+    m.playedAt,
+    m.result,
+    m.n,
+    CAST(1 AS SIGNED) AS runIndex,
+    CAST(1 AS SIGNED) AS slot,
+    CAST(CASE m.result WHEN 'W' THEN 3 WHEN 'D' THEN 1 ELSE 0 END AS SIGNED) AS groupPoints,
+    CAST('ALIVE' AS CHAR(8)) AS outcome
+  FROM vMundialitoMatches m
+  WHERE m.n = 1
+
+  UNION ALL
+
+  SELECT
+    m.playerId,
+    m.matchId,
+    m.playedAt,
+    m.result,
+    m.n,
+    -- Si el partido anterior cerro un mundialito (eliminado o campeon), este
+    -- abre el siguiente.
+    CASE WHEN prev.outcome = 'ALIVE' THEN prev.runIndex ELSE prev.runIndex + 1 END,
+    CASE WHEN prev.outcome = 'ALIVE' THEN prev.slot + 1 ELSE 1 END,
+    -- Los puntos de grupo se acumulan en los tres primeros puestos y despues
+    -- quedan congelados: en la eliminacion directa ya no deciden nada, pero se
+    -- conservan para poder mostrar como se clasifico.
+    CASE
+      WHEN prev.outcome <> 'ALIVE' OR prev.slot + 1 <= 3
+        THEN CASE WHEN prev.outcome = 'ALIVE' THEN prev.groupPoints ELSE 0 END
+           + CASE m.result WHEN 'W' THEN 3 WHEN 'D' THEN 1 ELSE 0 END
+      ELSE prev.groupPoints
+    END,
+    CASE
+      -- Mundialito nuevo: el puesto 1 no define nada.
+      WHEN prev.outcome <> 'ALIVE' THEN 'ALIVE'
+      -- Fase de grupos: queda afuera cuando ya no le alcanza, aunque le queden
+      -- partidos. Ganando todo lo que le queda suma 3 por partido; si ni asi
+      -- llega a 4, el mundialito se termina ahi y no se juega una tercera fecha
+      -- que no puede cambiar nada. En la practica pasa con dos derrotas: 0 + 3
+      -- es menos que 4.
+      WHEN prev.slot + 1 <= 3 THEN
+        CASE
+          WHEN prev.groupPoints
+             + CASE m.result WHEN 'W' THEN 3 WHEN 'D' THEN 1 ELSE 0 END
+             + 3 * (3 - (prev.slot + 1)) >= 4
+          THEN 'ALIVE'
+          ELSE 'OUT'
+        END
+      -- Eliminacion directa: perder es quedar afuera; el empate pasa de ronda,
+      -- y pasar de ronda en la final es dar la vuelta.
+      WHEN m.result = 'L' THEN 'OUT'
+      WHEN prev.slot + 1 = 8 THEN 'CHAMPION'
+      ELSE 'ALIVE'
+    END
+  FROM walk prev
+  INNER JOIN vMundialitoMatches m
+    ON m.playerId = prev.playerId
+   AND m.n        = prev.n + 1
+)
+SELECT
+  w.playerId,
+  w.matchId,
+  w.playedAt,
+  w.result,
+  w.n,
+  w.runIndex,
+  w.slot,
+  w.groupPoints,
+  w.outcome,
+  CAST(CASE w.result WHEN 'W' THEN 3 WHEN 'D' THEN 1 ELSE 0 END AS SIGNED) AS points,
+  CASE
+    WHEN w.slot <= 3 THEN 'GROUP'
+    WHEN w.slot = 4  THEN 'R16'
+    WHEN w.slot = 5  THEN 'R8'
+    WHEN w.slot = 6  THEN 'R4'
+    WHEN w.slot = 7  THEN 'SF'
+    ELSE 'F'
+  END AS phase
+FROM walk w;
+
+-- -----------------------------------------------------------------------------
+-- vMundialitoTitles — los mundialitos ganados por cada jugador
+-- -----------------------------------------------------------------------------
+-- firstTitleAt es el desempate del medallero: entre dos jugadores con la misma
+-- cantidad de copas va primero el que la consiguio antes, igual que en la
+-- vitrina de torneos.
+CREATE OR REPLACE VIEW vMundialitoTitles AS
+SELECT
+  r.playerId,
+  CAST(COUNT(*) AS SIGNED) AS titles,
+  MIN(r.playedAt)          AS firstTitleAt,
+  MAX(r.playedAt)          AS lastTitleAt
+FROM vMundialitoRuns r
+WHERE r.outcome = 'CHAMPION'
+GROUP BY r.playerId;
+
+-- -----------------------------------------------------------------------------
+-- vMundialitoCurrent — el mundialito vigente de cada jugador
+-- -----------------------------------------------------------------------------
+-- Vigente es el de mayor runIndex, este abierto o cerrado: un jugador que quedo
+-- eliminado sigue mostrando ESA corrida —con su pelota roja— hasta que juegue
+-- otro partido y arranque la siguiente. Lo mismo el campeon.
+--
+-- balls viaja como JSON con un objeto por partido jugado; las que faltan hasta
+-- ocho las dibuja el frontend en gris. Se arma aca por la misma razon que en
+-- vMatchDetail: un solo result set en vez de una consulta por jugador.
+CREATE OR REPLACE VIEW vMundialitoCurrent AS
+SELECT
+  cur.playerId,
+  cur.runIndex,
+  cur.played,
+  cur.groupPoints,
+  cur.status,
+  cur.lastPlayedAt,
+  -- Puesto que va a ocupar el proximo partido: el que sigue si esta vivo, y el
+  -- 1 del mundialito nuevo si la corrida ya cerro.
+  CAST(CASE WHEN cur.status = 'ALIVE' THEN cur.played + 1 ELSE 1 END AS SIGNED) AS nextSlot,
+  -- Fase en la que quedo la corrida: la del ultimo partido jugado.
+  CASE
+    WHEN cur.played <= 3 THEN 'GROUP'
+    WHEN cur.played = 4  THEN 'R16'
+    WHEN cur.played = 5  THEN 'R8'
+    WHEN cur.played = 6  THEN 'R4'
+    WHEN cur.played = 7  THEN 'SF'
+    ELSE 'F'
+  END AS phase,
+  balls.balls
+FROM (
+  SELECT
+    r.playerId,
+    r.runIndex,
+    CAST(COUNT(*) AS SIGNED)  AS played,
+    MAX(r.groupPoints)        AS groupPoints,
+    MAX(r.playedAt)           AS lastPlayedAt,
+    -- El desenlace de la corrida es el del ultimo partido: los anteriores son
+    -- todos ALIVE por construccion.
+    SUBSTRING_INDEX(
+      GROUP_CONCAT(r.outcome ORDER BY r.slot DESC SEPARATOR ','), ',', 1
+    ) AS status
+  FROM vMundialitoRuns r
+  INNER JOIN (
+    SELECT playerId, MAX(runIndex) AS runIndex
+    FROM vMundialitoRuns
+    GROUP BY playerId
+  ) last
+    ON last.playerId = r.playerId
+   AND last.runIndex = r.runIndex
+  GROUP BY r.playerId, r.runIndex
+) cur
+LEFT JOIN (
+  SELECT
+    ordered.playerId,
+    JSON_ARRAYAGG(
+      JSON_OBJECT(
+        'slot',    ordered.slot,
+        'phase',   ordered.phase,
+        'result',  ordered.result,
+        'points',  ordered.points,
+        'matchId', ordered.matchId
+      )
+    ) AS balls
+  FROM (
+    SELECT r.playerId, r.slot, r.phase, r.result, r.points, r.matchId
+    FROM vMundialitoRuns r
+    INNER JOIN (
+      SELECT playerId, MAX(runIndex) AS runIndex
+      FROM vMundialitoRuns
+      GROUP BY playerId
+    ) last
+      ON last.playerId = r.playerId
+     AND last.runIndex = r.runIndex
+    ORDER BY r.playerId, r.slot
+  ) ordered
+  GROUP BY ordered.playerId
+) balls ON balls.playerId = cur.playerId;

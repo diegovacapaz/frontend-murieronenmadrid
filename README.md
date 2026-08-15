@@ -51,7 +51,7 @@ src/
 ├── realtime/                gateway de websockets y servicio de notificación
 ├── common/                  envelope de respuesta, filtro de errores, enums, pipes
 └── modules/                 players · tournaments · matches · penalties
-                             teams · scoreboard · stats
+                             teams · scoreboard · stats · mundialito
 ```
 
 Cada módulo sigue la misma cadena, sin excepciones:
@@ -205,6 +205,16 @@ vTournamentChampions      el 1º de cada torneo finalizado
 vGeneralScoreboard/Standings   lo mismo, sumando todos los torneos
 ```
 
+Y la cadena del mundialito, que corre aparte porque no es una agregación sino un
+plegado con reinicio sobre los partidos de cada jugador:
+
+```
+vMundialitoMatches        partidos elegibles, numerados por jugador
+vMundialitoRuns           + mundialito, puesto, fase y desenlace (CTE recursivo)
+vMundialitoCurrent        la corrida vigente de cada uno, con sus pelotas en JSON
+vMundialitoTitles         cuántos ganó cada uno y cuándo ganó el primero
+```
+
 ### Reaplicar cambios de esquema
 
 `init/01-bootstrap.sh` solo corre la primera vez (cuando el volumen está vacío).
@@ -229,6 +239,7 @@ Corre como `root`: MySQL 8 no deja que un usuario común reemplace rutinas cuyo
 | `npm run lint`                       | ESLint con type-checking                             |
 | `npm run db:seed -- --force`         | Migra la historia desde `docs/Codigo.gs`             |
 | `node scripts/verify-migration.mjs`  | Compara las tablas nuevas contra el sistema original |
+| `node scripts/verify-mundialito.mjs` | Recalcula el mundialito en JS y lo contrasta con la base |
 | `node scripts/apply-sql.mjs`         | Reaplica vistas y procedures                         |
 
 ---
