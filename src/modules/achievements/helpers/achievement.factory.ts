@@ -9,9 +9,9 @@ import { AchievementCountDB, AchievementDB } from '../interfaces/database';
 /**
  * Arma las entidades de logros desde las filas de la base.
  *
- * Lo unico que hace ademas de copiar campos es desarmar el ROLLUP: la fila con
- * category en null es el total, y las otras tres son las categorias. Se separan
- * aca para que el frontend reciba `{ all, byCategory }` y no tenga que saber
+ * Lo único que hace además de copiar campos es desarmar el ROLLUP: la fila con
+ * category en null es el total, y las otras tres son las categorías. Se separan
+ * acá para que el frontend reciba `{ all, byCategory }` y no tenga que saber
  * que del otro lado hubo un GROUP BY ... WITH ROLLUP.
  */
 export class AchievementFactory {
@@ -35,7 +35,7 @@ export class AchievementFactory {
   static toSummary(dbs: AchievementCountDB[]): AchievementSummary {
     const summary = new AchievementSummary();
 
-    // Las tres categorias arrancan en cero: si un jugador no tuviera filas de
+    // Las tres categorías arrancan en cero: si un jugador no tuviera filas de
     // alguna, la pantalla igual tiene que poder pintar su contador.
     summary.byCategory = {
       [AchievementCategory.GENERAL]: AchievementFactory.emptyCount(),

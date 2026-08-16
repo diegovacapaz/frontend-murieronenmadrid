@@ -6,7 +6,7 @@ import { AchievementCountDB, AchievementDB } from './interfaces/database';
 import { IAchievementsRepository } from './interfaces/achievements.repository.interface';
 
 /**
- * Una sola llamada para toda la pantalla. El orden de la desestructuracion es
+ * Una sola llamada para toda la pantalla. El orden de la desestructuración es
  * el contrato con procedures/achievements.sql.
  */
 @Injectable()

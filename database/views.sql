@@ -842,7 +842,7 @@ WHERE ranked.rn = 1;
 -- =============================================================================
 
 -- -----------------------------------------------------------------------------
--- vPlayerStreakIslands — cada tramo consecutivo, de los tres tipos
+-- vPlayerStreakIslands — cada tramo consecutivo, de los cuatro tipos
 -- -----------------------------------------------------------------------------
 -- kind:
 --   UNBEATEN  partidos seguidos sin perder

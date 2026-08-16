@@ -5,8 +5,8 @@ import { ACHIEVEMENTS_REPOSITORY } from './achievements.constants';
 
 /**
  * No calcula nada, y esa es la idea: las 28 reglas viven en
- * vPlayerAchievements. Si alguna se repitiera aca existirian dos versiones del
- * mismo logro y tarde o temprano dirian cosas distintas.
+ * vPlayerAchievements. Si alguna se repitiera acá existirían dos versiones del
+ * mismo logro y tarde o temprano dirían cosas distintas.
  *
  * El 404 de jugador inexistente lo señaliza el SP.
  */

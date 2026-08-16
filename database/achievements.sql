@@ -8,7 +8,7 @@
 -- Achievements, y el estado de cada jugador no se guarda en ningun lado.
 --
 -- sortOrder fija el orden de la grilla y agrupa por categoria: 100+ Generales,
--- 200+ Superclasicos, 300+ Mundialito. Los huecos de diez dejan lugar para
+-- 300+ Superclasicos, 400+ Mundialito. Los huecos de diez dejan lugar para
 -- intercalar un logro nuevo sin renumerar los demas.
 -- =============================================================================
 

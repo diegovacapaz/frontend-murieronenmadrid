@@ -2,7 +2,7 @@ import { ApiProperty } from '@nestjs/swagger';
 import { AchievementCategory, AchievementState } from '../enums/achievement.enums';
 
 export class AchievementDto {
-  @ApiProperty({ description: 'Identificador del logro en el catalogo.', example: 'CAZADOR' })
+  @ApiProperty({ description: 'Identificador del logro en el catálogo.', example: 'CAZADOR' })
   code!: string;
 
   @ApiProperty({ enum: AchievementCategory })
@@ -14,7 +14,7 @@ export class AchievementDto {
   @ApiProperty()
   description!: string;
 
-  @ApiProperty({ description: 'Si es una maldicion, es decir, si puede romperse.' })
+  @ApiProperty({ description: 'Si es una maldición, es decir, si puede romperse.' })
   isBreakable!: boolean;
 
   @ApiProperty({ enum: AchievementState })
@@ -22,11 +22,11 @@ export class AchievementDto {
 
   @ApiProperty({
     nullable: true,
-    description: 'Cuanto lleva. Null en los logros de evento, que no tienen progreso parcial.',
+    description: 'Cuánto lleva. Null en los logros de evento, que no tienen progreso parcial.',
   })
   progress!: number | null;
 
-  @ApiProperty({ nullable: true, description: 'Cuanto necesita para conseguirlo.' })
+  @ApiProperty({ nullable: true, description: 'Cuánto necesita para conseguirlo.' })
   target!: number | null;
 }
 
@@ -45,7 +45,7 @@ export class AchievementSummaryDto {
   @ApiProperty({
     type: AchievementCountDto,
     isArray: false,
-    description: 'Contadores por categoria, indexados por su letra: G, S y M.',
+    description: 'Contadores por categoría, indexados por su letra: G, S y M.',
   })
   byCategory!: Record<AchievementCategory, AchievementCountDto>;
 }
