@@ -823,3 +823,126 @@ FROM (
   FROM vMundialitoRunBalls b
 ) ranked
 WHERE ranked.rn = 1;
+
+-- =============================================================================
+-- RACHAS
+-- =============================================================================
+-- Cuantos partidos seguidos lleva alguien sin perder, o sin ganar. Es de lo que
+-- mas se habla en el grupo y no sale de ninguna suma: hay que reconocer tramos
+-- consecutivos dentro del historial de cada jugador.
+--
+-- Se resuelve con el truco de "islas": dos numeraciones sobre la misma
+-- secuencia —una global y otra que solo cuenta las filas del tipo buscado— y su
+-- resta, que se mantiene constante mientras la racha no se corta. Agrupando por
+-- esa diferencia, cada grupo es una racha.
+--
+-- A diferencia del mundialito, aca cuentan TODOS los partidos, incluidos los de
+-- torneos sin detalle: estas rachas acompanian a la tabla historica, que
+-- tambien los cuenta.
+-- =============================================================================
+
+-- -----------------------------------------------------------------------------
+-- vPlayerStreakIslands — cada tramo consecutivo, de los tres tipos
+-- -----------------------------------------------------------------------------
+-- kind:
+--   UNBEATEN  partidos seguidos sin perder
+--   WIN       victorias seguidas
+--   WINLESS   partidos seguidos sin ganar
+--
+-- lastN e isOpen son lo que permite saber si la racha sigue viva: una racha
+-- esta abierta si su ultimo partido es el ultimo que jugo esa persona.
+CREATE OR REPLACE VIEW vPlayerStreakIslands AS
+WITH seq AS (
+  SELECT
+    r.playerId,
+    r.playedAt,
+    r.matchId,
+    r.result,
+    ROW_NUMBER() OVER (PARTITION BY r.playerId ORDER BY r.playedAt, r.matchId) AS n,
+    ROW_NUMBER() OVER (
+      PARTITION BY r.playerId, r.result <> 'L' ORDER BY r.playedAt, r.matchId
+    ) AS nUnbeaten,
+    ROW_NUMBER() OVER (
+      PARTITION BY r.playerId, r.result =  'W' ORDER BY r.playedAt, r.matchId
+    ) AS nWin,
+    ROW_NUMBER() OVER (
+      PARTITION BY r.playerId, r.result <> 'W' ORDER BY r.playedAt, r.matchId
+    ) AS nWinless
+  FROM vMatchPlayerResults r
+),
+totals AS (
+  SELECT playerId, MAX(n) AS lastMatch FROM seq GROUP BY playerId
+),
+islands AS (
+  SELECT playerId, 'UNBEATEN' AS kind, n - nUnbeaten AS island, n, playedAt
+  FROM seq WHERE result <> 'L'
+  UNION ALL
+  SELECT playerId, 'WIN', n - nWin, n, playedAt
+  FROM seq WHERE result = 'W'
+  UNION ALL
+  SELECT playerId, 'WINLESS', n - nWinless, n, playedAt
+  FROM seq WHERE result <> 'W'
+)
+SELECT
+  i.playerId,
+  i.kind,
+  CAST(COUNT(*) AS SIGNED) AS length,
+  MIN(i.playedAt)          AS startedAt,
+  MAX(i.playedAt)          AS endedAt,
+  CAST(MAX(i.n) = MAX(t.lastMatch) AS SIGNED) AS isOpen
+FROM islands i
+INNER JOIN totals t ON t.playerId = i.playerId
+GROUP BY i.playerId, i.kind, i.island;
+
+-- -----------------------------------------------------------------------------
+-- vPlayerStreaks — el resumen de rachas de cada jugador
+-- -----------------------------------------------------------------------------
+-- Las "actuales" son las rachas abiertas: la invicta y la que va sin ganar. Las
+-- dos pueden estar abiertas a la vez —despues de un empate, alguien lleva tres
+-- sin perder y dos sin ganar— y por eso viajan las dos; que se muestre una u
+-- otra es decision de la pantalla.
+CREATE OR REPLACE VIEW vPlayerStreaks AS
+SELECT
+  p.playerId,
+  COALESCE(best.bestUnbeaten, 0)     AS bestUnbeaten,
+  best.bestUnbeatenEndedAt,
+  COALESCE(best.bestWin, 0)          AS bestWin,
+  best.bestWinEndedAt,
+  COALESCE(best.worstWinless, 0)     AS worstWinless,
+  COALESCE(open.currentUnbeaten, 0)  AS currentUnbeaten,
+  COALESCE(open.currentWinless, 0)   AS currentWinless
+FROM Players p
+LEFT JOIN (
+  SELECT
+    s.playerId,
+    CAST(MAX(CASE WHEN s.kind = 'UNBEATEN' THEN s.length END) AS SIGNED) AS bestUnbeaten,
+    CAST(MAX(CASE WHEN s.kind = 'WIN'      THEN s.length END) AS SIGNED) AS bestWin,
+    CAST(MAX(CASE WHEN s.kind = 'WINLESS'  THEN s.length END) AS SIGNED) AS worstWinless,
+    -- La fecha del final de la mejor racha de cada tipo. El SUBSTRING_INDEX
+    -- sobre un GROUP_CONCAT ordenado es la forma de traer "el valor de la fila
+    -- que tiene el maximo" sin una segunda pasada.
+    --
+    -- Sale formateada como ISO con Z porque GROUP_CONCAT devuelve texto: el
+    -- typeCast del pool solo convierte columnas DATETIME, y esta ya no lo es.
+    SUBSTRING_INDEX(GROUP_CONCAT(
+      CASE WHEN s.kind = 'UNBEATEN'
+           THEN DATE_FORMAT(s.endedAt, '%Y-%m-%dT%H:%i:%sZ') END
+      ORDER BY CASE WHEN s.kind = 'UNBEATEN' THEN s.length ELSE 0 END DESC, s.endedAt DESC
+      SEPARATOR ','), ',', 1) AS bestUnbeatenEndedAt,
+    SUBSTRING_INDEX(GROUP_CONCAT(
+      CASE WHEN s.kind = 'WIN'
+           THEN DATE_FORMAT(s.endedAt, '%Y-%m-%dT%H:%i:%sZ') END
+      ORDER BY CASE WHEN s.kind = 'WIN' THEN s.length ELSE 0 END DESC, s.endedAt DESC
+      SEPARATOR ','), ',', 1) AS bestWinEndedAt
+  FROM vPlayerStreakIslands s
+  GROUP BY s.playerId
+) best ON best.playerId = p.playerId
+LEFT JOIN (
+  SELECT
+    s.playerId,
+    CAST(MAX(CASE WHEN s.kind = 'UNBEATEN' THEN s.length END) AS SIGNED) AS currentUnbeaten,
+    CAST(MAX(CASE WHEN s.kind = 'WINLESS'  THEN s.length END) AS SIGNED) AS currentWinless
+  FROM vPlayerStreakIslands s
+  WHERE s.isOpen = 1
+  GROUP BY s.playerId
+) open ON open.playerId = p.playerId;

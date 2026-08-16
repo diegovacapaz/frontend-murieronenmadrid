@@ -32,6 +32,8 @@ export interface PlayerStats {
   partners: PartnerStatFields[];
   highlights: StatHighlightFields[];
   teamDistribution: TeamDistributionFields[];
+  streaks: import('./database').PlayerStreaksFields;
+  activity: import('./database').PlayerActivityFields[];
 }
 
 export interface TournamentStats {
@@ -40,6 +42,8 @@ export interface TournamentStats {
   headToHead: HeadToHeadFields[];
   matchesByPlace: MatchesByPlaceFields[];
   timeline: MatchTimelinePointFields[];
+  race: import('./database').TournamentRaceEntryFields[];
+  attendance: import('./database').TournamentAttendanceFields[];
 }
 
 export interface GeneralStats {
@@ -49,6 +53,7 @@ export interface GeneralStats {
   tournamentsTimeline: TournamentTimelinePointFields[];
   topWinRate: TopWinRateFields[];
   records: RecordsFields;
+  streakRecords: import('./database').StreakRecordFields[];
 }
 
 export interface IStatsRepository {

@@ -69,6 +69,29 @@ export class RecordsDto {
   @ApiPropertyOptional({ nullable: true }) mostCups!: number | null;
 }
 
+export class StreakRecordDto {
+  @ApiProperty()
+  playerId!: number;
+
+  @ApiProperty()
+  displayName!: string;
+
+  @ApiPropertyOptional({ nullable: true })
+  photo!: string | null;
+
+  @ApiProperty({ description: 'Partidos seguidos sin perder.' })
+  length!: number;
+
+  @ApiProperty()
+  startedAt!: Date;
+
+  @ApiProperty()
+  endedAt!: Date;
+
+  @ApiProperty({ description: '1 si la racha sigue viva.' })
+  isOpen!: number;
+}
+
 export class GeneralStatsResponseDto {
   @ApiProperty({ type: GeneralStatsSummaryDto })
   summary!: GeneralStatsSummaryDto;
@@ -87,4 +110,10 @@ export class GeneralStatsResponseDto {
 
   @ApiProperty({ type: RecordsDto })
   records!: RecordsDto;
+
+  @ApiProperty({
+    type: [StreakRecordDto],
+    description: 'Las rachas invictas mas largas de la historia.',
+  })
+  streakRecords!: StreakRecordDto[];
 }

@@ -1,6 +1,7 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Team } from '../../teams/enums/team.enum';
 import { TournamentState } from '../../tournaments/enums/tournament-state.enum';
+import { MatchResult } from '../../matches/enums/match-result.enum';
 
 export class TournamentStatsSummaryDto {
   @ApiProperty() tournamentId!: number;
@@ -67,6 +68,61 @@ export class MatchTimelinePointDto {
   squadSize!: number;
 }
 
+export class RaceSeriesPointDto {
+  @ApiProperty({ description: 'Numero de fecha dentro del torneo.' })
+  n!: number;
+
+  @ApiProperty({ description: 'Puntos acumulados hasta esa fecha.' })
+  p!: number;
+
+  @ApiPropertyOptional({
+    enum: MatchResult,
+    nullable: true,
+    description: 'null cuando no jugo esa fecha.',
+  })
+  r!: MatchResult | null;
+}
+
+export class TournamentRaceEntryDto {
+  @ApiProperty()
+  playerId!: number;
+
+  @ApiProperty()
+  displayName!: string;
+
+  @ApiProperty({ description: 'Posicion final en la tabla.' })
+  position!: number;
+
+  @ApiProperty({ description: '1 si va en color; el resto se dibuja en gris.' })
+  highlight!: number;
+
+  @ApiProperty({ description: '1 si estuvo primero en algun momento.' })
+  everLed!: number;
+
+  @ApiProperty()
+  total!: number;
+
+  @ApiProperty({ type: [RaceSeriesPointDto] })
+  series!: RaceSeriesPointDto[];
+}
+
+export class TournamentAttendanceDto {
+  @ApiProperty()
+  playerId!: number;
+
+  @ApiProperty()
+  displayName!: string;
+
+  @ApiPropertyOptional({ nullable: true })
+  photo!: string | null;
+
+  @ApiProperty()
+  played!: number;
+
+  @ApiProperty({ type: [Number], description: 'Los partidos que jugo, por id.' })
+  matches!: number[];
+}
+
 export class TournamentStatsResponseDto {
   @ApiProperty({ type: TournamentStatsSummaryDto })
   summary!: TournamentStatsSummaryDto;
@@ -85,4 +141,15 @@ export class TournamentStatsResponseDto {
 
   @ApiProperty({ type: [MatchTimelinePointDto] })
   timeline!: MatchTimelinePointDto[];
+
+  @ApiProperty({
+    type: [TournamentRaceEntryDto],
+    description:
+      'Una linea por jugador. `highlight` marca las cuatro que van en color: el ' +
+      'campeon y los que lideraron en algun momento.',
+  })
+  race!: TournamentRaceEntryDto[];
+
+  @ApiProperty({ type: [TournamentAttendanceDto] })
+  attendance!: TournamentAttendanceDto[];
 }

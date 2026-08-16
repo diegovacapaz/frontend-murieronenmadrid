@@ -242,6 +242,80 @@ export interface RecordsFields {
   mostCups: number | null;
 }
 
+/** Rachas de un jugador. Las fechas llegan como ISO con Z desde la vista. */
+export interface PlayerStreaksFields {
+  playerId: number;
+  bestUnbeaten: number;
+  bestUnbeatenEndedAt: string | null;
+  bestWin: number;
+  bestWinEndedAt: string | null;
+  worstWinless: number;
+  /** Racha invicta abierta. Puede convivir con la de abajo tras un empate. */
+  currentUnbeaten: number;
+  currentWinless: number;
+}
+
+/** Un partido del grupo visto desde un jugador. `result` null = no jugo. */
+export interface PlayerActivityFields {
+  matchId: number;
+  tournamentId: number;
+  tournamentName: string;
+  playedAt: Date;
+  result: MatchResult | null;
+  team: Team | null;
+}
+
+/** Un punto de la serie: la fecha, los puntos acumulados y como le fue. */
+export interface RaceSeriesPoint {
+  /** Numero de fecha dentro del torneo, empezando en 1. */
+  n: number;
+  /** Puntos acumulados hasta esa fecha. */
+  p: number;
+  /** null cuando no jugo esa fecha: la linea queda horizontal. */
+  r: MatchResult | null;
+}
+
+/**
+ * La linea de un jugador en la carrera del campeonato.
+ *
+ * La serie viaja como JSON y no como una fila por fecha: son veintisiete
+ * jugadores por veinticuatro fechas, y mandar 648 filas para dibujar
+ * veintisiete lineas es pagar el ancho de banda de una tabla.
+ */
+export interface TournamentRaceEntryFields {
+  playerId: number;
+  displayName: string;
+  /** Posicion final en la tabla. */
+  position: number;
+  /** 1 si va en color; el resto se dibuja en gris como contexto. */
+  highlight: number;
+  /** 1 si estuvo primero en algun momento del torneo. */
+  everLed: number;
+  total: number;
+  series: RaceSeriesPoint[];
+}
+
+/** Asistencia de un jugador al torneo, como lista de partidos jugados. */
+export interface TournamentAttendanceFields {
+  playerId: number;
+  displayName: string;
+  photo: string | null;
+  played: number;
+  matches: number[];
+}
+
+/** Una racha invicta historica, con protagonista. */
+export interface StreakRecordFields {
+  playerId: number;
+  displayName: string;
+  photo: string | null;
+  length: number;
+  startedAt: Date;
+  endedAt: Date;
+  /** 1 si sigue viva. */
+  isOpen: number;
+}
+
 // ─────────────────────────── Filas crudas ─────────────────────────────────────
 
 export interface PlayerStatsSummaryDB extends Row, PlayerStatsSummaryFields {}
@@ -261,3 +335,8 @@ export interface ChampionRankDB extends Row, ChampionRankFields {}
 export interface TournamentTimelinePointDB extends Row, TournamentTimelinePointFields {}
 export interface TopWinRateDB extends Row, TopWinRateFields {}
 export interface RecordsDB extends Row, RecordsFields {}
+export interface PlayerStreaksDB extends Row, PlayerStreaksFields {}
+export interface PlayerActivityDB extends Row, PlayerActivityFields {}
+export interface TournamentRaceEntryDB extends Row, TournamentRaceEntryFields {}
+export interface TournamentAttendanceDB extends Row, TournamentAttendanceFields {}
+export interface StreakRecordDB extends Row, StreakRecordFields {}

@@ -139,6 +139,52 @@ export class TeamDistributionDto {
 }
 
 /** Todo el perfil de un jugador en una sola respuesta. */
+export class PlayerStreaksDto {
+  @ApiProperty()
+  playerId!: number;
+
+  @ApiProperty({ description: 'La racha invicta mas larga que tuvo.' })
+  bestUnbeaten!: number;
+
+  @ApiPropertyOptional({ nullable: true, description: 'ISO con Z.' })
+  bestUnbeatenEndedAt!: string | null;
+
+  @ApiProperty({ description: 'Victorias seguidas, su maximo.' })
+  bestWin!: number;
+
+  @ApiPropertyOptional({ nullable: true })
+  bestWinEndedAt!: string | null;
+
+  @ApiProperty({ description: 'La peor sequia: partidos seguidos sin ganar.' })
+  worstWinless!: number;
+
+  @ApiProperty({ description: 'Racha invicta abierta. 0 si el ultimo lo perdio.' })
+  currentUnbeaten!: number;
+
+  @ApiProperty({ description: 'Partidos sin ganar abiertos. 0 si el ultimo lo gano.' })
+  currentWinless!: number;
+}
+
+export class PlayerActivityDto {
+  @ApiProperty()
+  matchId!: number;
+
+  @ApiProperty()
+  tournamentId!: number;
+
+  @ApiProperty()
+  tournamentName!: string;
+
+  @ApiProperty()
+  playedAt!: Date;
+
+  @ApiPropertyOptional({ enum: MatchResult, nullable: true, description: 'null = falto.' })
+  result!: MatchResult | null;
+
+  @ApiPropertyOptional({ enum: Team, nullable: true })
+  team!: Team | null;
+}
+
 export class PlayerStatsResponseDto {
   @ApiProperty({ type: PlayerStatsSummaryDto })
   summary!: PlayerStatsSummaryDto;
@@ -166,4 +212,13 @@ export class PlayerStatsResponseDto {
 
   @ApiProperty({ type: [TeamDistributionDto] })
   teamDistribution!: TeamDistributionDto[];
+
+  @ApiProperty({ type: PlayerStreaksDto })
+  streaks!: PlayerStreaksDto;
+
+  @ApiProperty({
+    type: [PlayerActivityDto],
+    description: 'Todos los partidos del grupo; result en null es una ausencia.',
+  })
+  activity!: PlayerActivityDto[];
 }

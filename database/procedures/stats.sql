@@ -28,6 +28,8 @@
 --   5. partners         rendimiento junto a cada companiero
 --   6. highlights       victima / verdugo / clasico / mejor y peor quimica
 --   7. teamDistribution cuanto jugo en cada equipo y como le fue
+--   8. streaks          rachas: la actual, la mejor invicta, la peor sequia
+--   9. activity         todos los partidos del grupo, con si jugo o falto
 --
 -- pMinAgainst / pMinTogether: minimo de cruces y de partidos juntos para que
 -- un rival o un companiero entre en los destacados. Vienen del service (5 y 5,
@@ -321,6 +323,43 @@ BEGIN
     WHERE r.playerId = pPlayerId
     GROUP BY r.team, t.isDerbyTeam
     ORDER BY played DESC;
+
+    -- ── 8. streaks ────────────────────────────────────────────────────────────
+    -- Una fila siempre, aunque nunca haya jugado: vPlayerStreaks parte de
+    -- Players y devuelve ceros.
+    SELECT
+        s.playerId,
+        s.bestUnbeaten,
+        s.bestUnbeatenEndedAt,
+        s.bestWin,
+        s.bestWinEndedAt,
+        s.worstWinless,
+        s.currentUnbeaten,
+        s.currentWinless
+    FROM vPlayerStreaks s
+    WHERE s.playerId = pPlayerId;
+
+    -- ── 9. activity ───────────────────────────────────────────────────────────
+    -- TODOS los partidos de la historia, jugados o no, para la grilla de
+    -- presentismo. `result` en NULL es una ausencia.
+    --
+    -- Son los partidos del grupo y no los del jugador a proposito: la grilla
+    -- tiene que mostrar los huecos, que es justamente el dato. Un partido
+    -- anterior a su debut tambien cuenta como hueco, y esta bien —muestra desde
+    -- cuando esta—.
+    SELECT
+        m.matchId,
+        m.tournamentId,
+        t.`name` AS tournamentName,
+        m.playedAt,
+        r.result,
+        r.team
+    FROM Matches m
+    INNER JOIN Tournaments t ON t.tournamentId = m.tournamentId
+    LEFT JOIN vMatchPlayerResults r
+      ON r.matchId  = m.matchId
+     AND r.playerId = pPlayerId
+    ORDER BY m.playedAt, m.matchId;
 END //
 DELIMITER ;
 
@@ -333,6 +372,8 @@ DELIMITER ;
 --   3. headToHead     cruce equipo vs equipo, separando derbies de partidos normales
 --   4. matchesByPlace donde se jugo
 --   5. timeline       partido a partido, para la linea de tiempo
+--   6. race           puntos acumulados fecha a fecha, todos los jugadores
+--   7. attendance     quien jugo cada fecha, para el mapa de asistencia
 DROP PROCEDURE IF EXISTS GetTournamentStats;
 
 DELIMITER //
@@ -476,6 +517,138 @@ BEGIN
     WHERE m.tournamentId = pTournamentId
     GROUP BY m.matchId, m.playedAt, m.place, m.winnerTeam, m.goalsDiference, m.isDerby
     ORDER BY m.playedAt, m.matchId;
+
+    -- ── 6. race ───────────────────────────────────────────────────────────────
+    -- La carrera del campeonato: puntos acumulados fecha a fecha, de TODOS.
+    --
+    -- Una fila por jugador con su serie como JSON, y no una fila por (jugador,
+    -- fecha): son veintisiete por veinticuatro, y mandar 648 filas con ocho
+    -- columnas cada una para dibujar veintisiete lineas es pagar el ancho de
+    -- banda de una tabla para alimentar un grafico.
+    --
+    -- La grilla completa (cada jugador contra CADA partido) es lo que hace que
+    -- la linea siga siendo horizontal cuando alguien falta, en vez de saltar
+    -- directo al proximo partido que jugo y mentir sobre cuando sumo.
+    --
+    -- `highlight` marca las cuatro que van en color: los cuatro primeros de la
+    -- tabla tal como esta hoy. En un torneo en curso son los que van punteando;
+    -- en uno terminado, los del podio ampliado.
+    --
+    -- Que solo cuatro tengan color no deja a nadie afuera: las otras veintitres
+    -- lineas se dibujan igual, en gris. `everLed` viaja para que el frontend
+    -- pueda señalar a alguien que lidero y despues se cayo de los cuatro.
+    WITH tourMatches AS (
+        SELECT
+            m.matchId,
+            m.playedAt,
+            CAST(ROW_NUMBER() OVER (ORDER BY m.playedAt, m.matchId) AS SIGNED) AS n
+        FROM Matches m
+        WHERE m.tournamentId = pTournamentId
+    ),
+    squad AS (
+        SELECT DISTINCT mp.playerId
+        FROM MatchPlayers mp
+        WHERE mp.tournamentId = pTournamentId
+    ),
+    grid AS (
+        SELECT
+            sq.playerId,
+            tm.n,
+            tm.matchId,
+            tm.playedAt,
+            r.result,
+            COALESCE(
+                CASE r.result
+                    WHEN 'W' THEN t.winningPoints
+                    WHEN 'D' THEN t.drawingPoints
+                    WHEN 'L' THEN t.lossingPoints
+                END, 0) AS points
+        FROM squad sq
+        CROSS JOIN tourMatches tm
+        INNER JOIN Tournaments t ON t.tournamentId = pTournamentId
+        LEFT JOIN vMatchPlayerResults r
+          ON r.playerId = sq.playerId
+         AND r.matchId  = tm.matchId
+    ),
+    cumulative AS (
+        SELECT
+            g.*,
+            SUM(g.points) OVER (PARTITION BY g.playerId ORDER BY g.n) AS acc
+        FROM grid g
+    ),
+    ranked AS (
+        -- RANK y no ROW_NUMBER: si tres empatan en la punta, los tres lideran.
+        SELECT c.*, RANK() OVER (PARTITION BY c.n ORDER BY c.acc DESC) AS posAt
+        FROM cumulative c
+    ),
+    ledEver AS (
+        SELECT playerId, CAST(MIN(n) AS SIGNED) AS firstLedAt
+        FROM ranked
+        WHERE posAt = 1
+        GROUP BY playerId
+    ),
+    priority AS (
+        SELECT
+            st.playerId,
+            st.`position`,
+            led.firstLedAt
+        FROM vTournamentStandings st
+        LEFT JOIN ledEver led ON led.playerId = st.playerId
+        WHERE st.tournamentId = pTournamentId
+    )
+    SELECT
+        pr.playerId,
+        p.displayName,
+        pr.`position`,
+        CAST(pr.`position` <= 4 AS SIGNED)           AS highlight,
+        CAST(pr.firstLedAt IS NOT NULL AS SIGNED)  AS everLed,
+        series.total,
+        series.series
+    FROM priority pr
+    INNER JOIN vPlayerDetail p ON p.playerId = pr.playerId
+    INNER JOIN (
+        SELECT
+            ordered.playerId,
+            MAX(ordered.acc) AS total,
+            JSON_ARRAYAGG(
+                JSON_OBJECT('n', ordered.n, 'p', ordered.acc, 'r', ordered.result)
+            ) AS series
+        FROM (
+            SELECT r.playerId, r.n, r.acc, r.result
+            FROM ranked r
+            ORDER BY r.playerId, r.n
+        ) ordered
+        GROUP BY ordered.playerId
+    ) series ON series.playerId = pr.playerId
+    ORDER BY pr.`position`;
+
+    -- ── 7. attendance ─────────────────────────────────────────────────────────
+    -- Quien estuvo en cada fecha. Viaja como lista de matchId por jugador y no
+    -- como una fila por celda: son veintisiete jugadores por veinticuatro
+    -- fechas, y mandar las 648 combinaciones para decir "no vino" es pagar
+    -- ancho de banda por el vacio. El frontend cruza contra el timeline.
+    SELECT
+        att.playerId,
+        p.displayName,
+        p.photo,
+        att.played,
+        att.matches
+    FROM (
+        SELECT
+            ordered.playerId,
+            CAST(COUNT(*) AS SIGNED) AS played,
+            JSON_ARRAYAGG(ordered.matchId) AS matches
+        FROM (
+            SELECT mp.playerId, mp.matchId
+            FROM MatchPlayers mp
+            INNER JOIN Matches m ON m.matchId = mp.matchId
+            WHERE m.tournamentId = pTournamentId
+            ORDER BY mp.playerId, m.playedAt, m.matchId
+        ) ordered
+        GROUP BY ordered.playerId
+    ) att
+    INNER JOIN vPlayerDetail p ON p.playerId = att.playerId
+    ORDER BY att.played DESC, p.displayName;
 END //
 DELIMITER ;
 
@@ -489,6 +662,7 @@ DELIMITER ;
 --   4. tournamentsTimeline  un punto por torneo, para el grafico historico
 --   5. topWinRate       los mejores por winrate, con minimo de partidos
 --   6. records          maximos y minimos de una sola pasada
+--   7. streakRecords    las rachas invictas mas largas de la historia
 DROP PROCEDURE IF EXISTS GetGeneralStats;
 
 DELIMITER //
@@ -596,5 +770,27 @@ BEGIN
          ) s)                                                                AS biggestSquad,
         (SELECT CAST(MAX(played) AS SIGNED) FROM vGeneralScoreboard)         AS mostMatchesPlayed,
         (SELECT CAST(MAX(cups) AS SIGNED) FROM vPlayerDetail)                AS mostCups;
+
+    -- ── 7. streakRecords ──────────────────────────────────────────────────────
+    -- Las rachas invictas mas largas de la historia, con quien y cuando. Es el
+    -- record que la gente recuerda; los demas maximos del result set anterior
+    -- son numeros sueltos y este tiene protagonista.
+    --
+    -- `isOpen` marca las que siguen vivas: una racha abierta se lee distinto,
+    -- todavia puede crecer.
+    SELECT
+        s.playerId,
+        p.displayName,
+        p.photo,
+        s.length,
+        s.startedAt,
+        s.endedAt,
+        s.isOpen
+    FROM vPlayerStreakIslands s
+    INNER JOIN vPlayerDetail p ON p.playerId = s.playerId
+    WHERE s.kind = 'UNBEATEN'
+      AND s.length >= 5
+    ORDER BY s.length DESC, s.endedAt DESC
+    LIMIT 5;
 END //
 DELIMITER ;

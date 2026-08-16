@@ -8,14 +8,19 @@ import {
   MatchTimelinePointDB,
   MatchesByPlaceDB,
   PartnerStatDB,
+  PlayerActivityDB,
   PlayerStatsSummaryDB,
+  PlayerStreaksDB,
   PlayerTournamentStatDB,
   RecordsDB,
   RivalStatDB,
   StatHighlightDB,
+  StreakRecordDB,
   TeamDistributionDB,
   TeamPerformanceDB,
   TopWinRateDB,
+  TournamentAttendanceDB,
+  TournamentRaceEntryDB,
   TournamentStatsSummaryDB,
   TournamentTimelinePointDB,
   WinRateSeriesPointDB,
@@ -53,6 +58,8 @@ export class StatsRepository implements IStatsRepository {
       partners,
       highlights,
       teamDistribution,
+      streaks,
+      activity,
     ] = await this.db.callMulti<
       [
         PlayerStatsSummaryDB[],
@@ -62,6 +69,8 @@ export class StatsRepository implements IStatsRepository {
         PartnerStatDB[],
         StatHighlightDB[],
         TeamDistributionDB[],
+        PlayerStreaksDB[],
+        PlayerActivityDB[],
       ]
     >('GetPlayerStats', [playerId, minAgainst, minTogether]);
 
@@ -73,11 +82,13 @@ export class StatsRepository implements IStatsRepository {
       partners: StatsFactory.partners(partners),
       highlights: StatsFactory.highlights(highlights),
       teamDistribution: StatsFactory.teamDistribution(teamDistribution),
+      streaks: StatsFactory.playerStreaks(this.firstOrFail(streaks, 'GetPlayerStats')),
+      activity: StatsFactory.playerActivity(activity),
     };
   }
 
   async findTournamentStats(tournamentId: number): Promise<TournamentStats> {
-    const [summary, teamPerformance, headToHead, matchesByPlace, timeline] =
+    const [summary, teamPerformance, headToHead, matchesByPlace, timeline, race, attendance] =
       await this.db.callMulti<
         [
           TournamentStatsSummaryDB[],
@@ -85,6 +96,8 @@ export class StatsRepository implements IStatsRepository {
           HeadToHeadDB[],
           MatchesByPlaceDB[],
           MatchTimelinePointDB[],
+          TournamentRaceEntryDB[],
+          TournamentAttendanceDB[],
         ]
       >('GetTournamentStats', [tournamentId]);
 
@@ -96,6 +109,8 @@ export class StatsRepository implements IStatsRepository {
       headToHead: StatsFactory.headToHead(headToHead),
       matchesByPlace: StatsFactory.matchesByPlace(matchesByPlace),
       timeline: StatsFactory.matchTimeline(timeline),
+      race: StatsFactory.race(race),
+      attendance: StatsFactory.attendance(attendance),
     };
   }
 
@@ -107,6 +122,7 @@ export class StatsRepository implements IStatsRepository {
       tournamentsTimeline,
       topWinRate,
       records,
+      streakRecords,
     ] = await this.db.callMulti<
       [
         GeneralStatsSummaryDB[],
@@ -115,6 +131,7 @@ export class StatsRepository implements IStatsRepository {
         TournamentTimelinePointDB[],
         TopWinRateDB[],
         RecordsDB[],
+        StreakRecordDB[],
       ]
     >('GetGeneralStats', [minMatches]);
 
@@ -125,6 +142,7 @@ export class StatsRepository implements IStatsRepository {
       tournamentsTimeline: StatsFactory.tournamentsTimeline(tournamentsTimeline),
       topWinRate: StatsFactory.topWinRate(topWinRate),
       records: StatsFactory.records(this.firstOrFail(records, 'GetGeneralStats')),
+      streakRecords: StatsFactory.streakRecords(streakRecords),
     };
   }
 

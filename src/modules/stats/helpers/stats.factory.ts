@@ -12,8 +12,13 @@ import type {
   MatchesByPlaceFields,
   PartnerStatDB,
   PartnerStatFields,
+  PlayerActivityDB,
+  PlayerActivityFields,
   PlayerStatsSummaryDB,
   PlayerStatsSummaryFields,
+  PlayerStreaksDB,
+  PlayerStreaksFields,
+  RaceSeriesPoint,
   PlayerTournamentStatDB,
   PlayerTournamentStatFields,
   RecordsDB,
@@ -22,12 +27,18 @@ import type {
   RivalStatFields,
   StatHighlightDB,
   StatHighlightFields,
+  StreakRecordDB,
+  StreakRecordFields,
   TeamDistributionDB,
   TeamDistributionFields,
   TeamPerformanceDB,
   TeamPerformanceFields,
   TopWinRateDB,
   TopWinRateFields,
+  TournamentAttendanceDB,
+  TournamentAttendanceFields,
+  TournamentRaceEntryDB,
+  TournamentRaceEntryFields,
   TournamentStatsSummaryDB,
   TournamentStatsSummaryFields,
   TournamentTimelinePointDB,
@@ -153,6 +164,27 @@ const RECORDS_KEYS = [
   'mostCups',
 ] as const satisfies ReadonlyArray<keyof RecordsFields>;
 
+const PLAYER_STREAKS_KEYS = [
+  'playerId', 'bestUnbeaten', 'bestUnbeatenEndedAt', 'bestWin', 'bestWinEndedAt',
+  'worstWinless', 'currentUnbeaten', 'currentWinless',
+] as const satisfies ReadonlyArray<keyof PlayerStreaksFields>;
+
+const PLAYER_ACTIVITY_KEYS = [
+  'matchId', 'tournamentId', 'tournamentName', 'playedAt', 'result', 'team',
+] as const satisfies ReadonlyArray<keyof PlayerActivityFields>;
+
+const RACE_ENTRY_KEYS = [
+  'playerId', 'displayName', 'position', 'highlight', 'everLed', 'total', 'series',
+] as const satisfies ReadonlyArray<keyof TournamentRaceEntryFields>;
+
+const ATTENDANCE_KEYS = [
+  'playerId', 'displayName', 'photo', 'played', 'matches',
+] as const satisfies ReadonlyArray<keyof TournamentAttendanceFields>;
+
+const STREAK_RECORD_KEYS = [
+  'playerId', 'displayName', 'photo', 'length', 'startedAt', 'endedAt', 'isOpen',
+] as const satisfies ReadonlyArray<keyof StreakRecordFields>;
+
 export class StatsFactory {
   static playerSummary(db: PlayerStatsSummaryDB): PlayerStatsSummaryFields {
     const summary = project(db, PLAYER_SUMMARY_KEYS);
@@ -231,6 +263,39 @@ export class StatsFactory {
 
   static topWinRate(dbs: TopWinRateDB[]): TopWinRateFields[] {
     return projectList(dbs, TOP_WINRATE_KEYS);
+  }
+
+  static playerStreaks(db: PlayerStreaksDB): PlayerStreaksFields {
+    return project(db, PLAYER_STREAKS_KEYS);
+  }
+
+  static playerActivity(dbs: PlayerActivityDB[]): PlayerActivityFields[] {
+    return projectList(dbs, PLAYER_ACTIVITY_KEYS);
+  }
+
+  static race(dbs: TournamentRaceEntryDB[]): TournamentRaceEntryFields[] {
+    return dbs.map((db) => {
+      const row = project(db, RACE_ENTRY_KEYS);
+      // JSON_ARRAYAGG no garantiza el orden de sus elementos: se ordena aca en
+      // vez de confiar en un detalle de implementacion del motor.
+      const series: RaceSeriesPoint[] = db.series ?? [];
+      row.series = [...series].sort((a, b) => a.n - b.n);
+      return row;
+    });
+  }
+
+  static attendance(dbs: TournamentAttendanceDB[]): TournamentAttendanceFields[] {
+    return dbs.map((db) => {
+      const row = project(db, ATTENDANCE_KEYS);
+      // El JSON_ARRAYAGG llega parseado por el typeCast, pero una fila sin
+      // partidos no existe en el result set; el ?? es por las dudas.
+      row.matches = db.matches ?? [];
+      return row;
+    });
+  }
+
+  static streakRecords(dbs: StreakRecordDB[]): StreakRecordFields[] {
+    return projectList(dbs, STREAK_RECORD_KEYS);
   }
 
   static records(db: RecordsDB): RecordsFields {
