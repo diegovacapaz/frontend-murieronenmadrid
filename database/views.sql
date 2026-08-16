@@ -848,6 +848,7 @@ WHERE ranked.rn = 1;
 --   UNBEATEN  partidos seguidos sin perder
 --   WIN       victorias seguidas
 --   WINLESS   partidos seguidos sin ganar
+--   LOSS      derrotas seguidas
 --
 -- lastN e isOpen son lo que permite saber si la racha sigue viva: una racha
 -- esta abierta si su ultimo partido es el ultimo que jugo esa persona.
@@ -867,7 +868,10 @@ WITH seq AS (
     ) AS nWin,
     ROW_NUMBER() OVER (
       PARTITION BY r.playerId, r.result <> 'W' ORDER BY r.playedAt, r.matchId
-    ) AS nWinless
+    ) AS nWinless,
+    ROW_NUMBER() OVER (
+      PARTITION BY r.playerId, r.result =  'L' ORDER BY r.playedAt, r.matchId
+    ) AS nLoss
   FROM vMatchPlayerResults r
 ),
 totals AS (
@@ -882,6 +886,9 @@ islands AS (
   UNION ALL
   SELECT playerId, 'WINLESS', n - nWinless, n, playedAt
   FROM seq WHERE result <> 'W'
+  UNION ALL
+  SELECT playerId, 'LOSS', n - nLoss, n, playedAt
+  FROM seq WHERE result = 'L'
 )
 SELECT
   i.playerId,
@@ -909,6 +916,7 @@ SELECT
   COALESCE(best.bestWin, 0)          AS bestWin,
   best.bestWinEndedAt,
   COALESCE(best.worstWinless, 0)     AS worstWinless,
+  COALESCE(best.worstLoss, 0)        AS worstLoss,
   COALESCE(open.currentUnbeaten, 0)  AS currentUnbeaten,
   COALESCE(open.currentWinless, 0)   AS currentWinless
 FROM Players p
@@ -918,6 +926,7 @@ LEFT JOIN (
     CAST(MAX(CASE WHEN s.kind = 'UNBEATEN' THEN s.length END) AS SIGNED) AS bestUnbeaten,
     CAST(MAX(CASE WHEN s.kind = 'WIN'      THEN s.length END) AS SIGNED) AS bestWin,
     CAST(MAX(CASE WHEN s.kind = 'WINLESS'  THEN s.length END) AS SIGNED) AS worstWinless,
+    CAST(MAX(CASE WHEN s.kind = 'LOSS'     THEN s.length END) AS SIGNED) AS worstLoss,
     -- La fecha del final de la mejor racha de cada tipo. El SUBSTRING_INDEX
     -- sobre un GROUP_CONCAT ordenado es la forma de traer "el valor de la fila
     -- que tiene el maximo" sin una segunda pasada.
@@ -1141,3 +1150,30 @@ FROM (
   GROUP BY grid.tournamentId, grid.matchday, grid.matchdays, grid.playerId,
            t.winningPoints, pp.penalty
 ) b;
+
+-- -----------------------------------------------------------------------------
+-- vPlayerGoalDiffPeaks — hasta donde llego la diferencia acumulada
+-- -----------------------------------------------------------------------------
+-- La diferencia de gol de un jugador sube y baja toda la vida. Un logro que
+-- dijera "tene +50 hoy" se prenderia y se apagaria; lo que se guarda aca es el
+-- punto mas alto y el mas bajo que toco la cuenta en toda su carrera, y eso
+-- solo puede crecer.
+--
+-- GREATEST y LEAST contra 0 evitan el caso raro del que siempre estuvo en
+-- negativo: su "pico" es 0, no su mejor momento negativo.
+CREATE OR REPLACE VIEW vPlayerGoalDiffPeaks AS
+SELECT
+  s.playerId,
+  CAST(GREATEST(MAX(s.running), 0) AS SIGNED) AS peakGoalDiff,
+  CAST(LEAST(MIN(s.running), 0)    AS SIGNED) AS floorGoalDiff
+FROM (
+  SELECT
+    r.playerId,
+    SUM(r.goalsDiference) OVER (
+      PARTITION BY r.playerId
+      ORDER BY r.playedAt, r.matchId
+      ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+    ) AS running
+  FROM vMatchPlayerResults r
+) s
+GROUP BY s.playerId;

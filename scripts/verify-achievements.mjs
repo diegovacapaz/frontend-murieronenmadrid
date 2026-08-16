@@ -186,6 +186,35 @@ function compareWinRateDesc(a, b) {
 }
 
 /**
+ * Pico y piso de la diferencia de gol acumulada a lo largo de la carrera. Es lo
+ * que vuelve historicos a Pichichi y Pichi: importa haber tocado +50 alguna vez,
+ * no estar en +50 hoy. Aca cuentan todos los partidos, igual que en la tabla
+ * historica que el jugador ve en su perfil.
+ */
+function expectedPeaks(playerMatches) {
+  let running = 0;
+  let peak = 0;
+  let floor = 0;
+  for (const match of playerMatches) {
+    running += match.goalsDiference;
+    peak = Math.max(peak, running);
+    floor = Math.min(floor, running);
+  }
+  return { peakGoalDiff: peak, floorGoalDiff: floor };
+}
+
+/** La racha mas larga de derrotas consecutivas. */
+function expectedWorstLoss(playerMatches) {
+  let best = 0;
+  let run = 0;
+  for (const match of playerMatches) {
+    run = match.result === 'L' ? run + 1 : 0;
+    best = Math.max(best, run);
+  }
+  return best;
+}
+
+/**
  * Compara la tabla COMPLETA (todas las filas, todas las columnas derivadas)
  * contra vTournamentMatchdayStandings, torneo por torneo y fecha por fecha.
  * No alcanza con mirar el lider: la mayoria de las filas de esa vista son
@@ -386,6 +415,57 @@ async function main() {
       process.exitCode = 1;
     } else {
       console.log('fecha a fecha OK');
+    }
+
+    // -------------------------------------------------------------------------
+    // Picos de diferencia de gol acumulada, y racha de derrotas
+    // -------------------------------------------------------------------------
+    const [streakMatches] = await connection.query(`
+      SELECT playerId, matchId, result, goalsDiference, playedAt
+      FROM vMatchPlayerResults
+      ORDER BY playerId, playedAt, matchId
+    `);
+
+    const matchesByPlayer = new Map();
+    for (const match of streakMatches) {
+      if (!matchesByPlayer.has(match.playerId)) matchesByPlayer.set(match.playerId, []);
+      matchesByPlayer.get(match.playerId).push(match);
+    }
+
+    const expectedPeaksByPlayer = new Map();
+    const expectedWorstLossByPlayer = new Map();
+    for (const [playerId, matches] of matchesByPlayer) {
+      expectedPeaksByPlayer.set(playerId, expectedPeaks(matches));
+      expectedWorstLossByPlayer.set(playerId, { worstLoss: expectedWorstLoss(matches) });
+    }
+
+    const [actualPeaks] = await connection.query(
+      'SELECT playerId, peakGoalDiff, floorGoalDiff FROM vPlayerGoalDiffPeaks',
+    );
+    const peakProblems = compareByPlayerId(
+      expectedPeaksByPlayer,
+      actualPeaks,
+      ['peakGoalDiff', 'floorGoalDiff'],
+      'picos de diferencia de gol',
+    );
+
+    const [actualWorstLoss] = await connection.query('SELECT playerId, worstLoss FROM vPlayerStreaks');
+    const worstLossProblems = compareByPlayerId(
+      expectedWorstLossByPlayer,
+      actualWorstLoss,
+      ['worstLoss'],
+      'racha de derrotas',
+    );
+
+    const streakProblems = [...peakProblems, ...worstLossProblems];
+
+    if (streakProblems.length > 0) {
+      console.error(`[verify] ${streakProblems.length} DIFERENCIAS en picos/racha de derrotas:`);
+      for (const problem of streakProblems.slice(0, 40)) console.error(`  - ${problem}`);
+      if (streakProblems.length > 40) console.error(`  ... y ${streakProblems.length - 40} mas`);
+      process.exitCode = 1;
+    } else {
+      console.log('picos de diferencia de gol y racha de derrotas OK');
     }
   } finally {
     await connection.end();
