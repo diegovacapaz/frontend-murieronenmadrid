@@ -291,6 +291,64 @@ function expectedLeadFacts(tablesByTournament) {
 }
 
 /**
+ * La primera fecha en la que cada jugador estuvo primero en cada torneo, y
+ * cuantas fechas tuvo ese torneo.
+ *
+ * Son los dos operandos de la igualdad de la que sale comebackTitles: un titulo
+ * es remontada cuando la primera vez que el campeon aparece primero es,
+ * justamente, la ultima fecha. Se verifican por separado porque el hecho final
+ * da cero para todos —en el historial no hay ni una remontada— y una
+ * comparacion de ceros contra ceros no prueba nada. Los pedazos, en cambio,
+ * tienen valores variados y bien distintos entre si.
+ *
+ * Devuelve un mapa con clave "torneo:jugador" para poder comparar fila por fila
+ * y que el mensaje de error muestre los dos numeros.
+ */
+function expectedFirstLeads(tablesByTournament) {
+  const firstLeads = new Map();
+  for (const [tournamentId, tables] of tablesByTournament) {
+    for (let i = 0; i < tables.length; i++) {
+      const leader = tables[i].find((row) => row.position === 1).playerId;
+      const key = `${tournamentId}:${leader}`;
+      if (firstLeads.has(key)) continue;   // solo la PRIMERA vez que lidero
+      firstLeads.set(key, {
+        tournamentId,
+        playerId: leader,
+        firstLeadMatchday: i + 1,
+        matchdays: tables.length,
+      });
+    }
+  }
+  return firstLeads;
+}
+
+/**
+ * Las columnas que vPlayerAchievementFacts no calcula: las copia tal cual de
+ * otra vista. Cada tupla es [vista fuente, columna alla, columna aca].
+ *
+ * Que el numero de la fuente este bien ya lo verifican las comprobaciones de
+ * arriba; lo que nadie miraba es el CABLEADO. Un COALESCE(att.bestAbsenceStreak)
+ * saliendo por la columna bestAttendanceStreak, o un pk joineado contra la
+ * vista equivocada, pasaria todas las demas comprobaciones en verde porque
+ * todas leen las vistas FUENTE y no esta.
+ */
+const PASS_THROUGH_COLUMNS = [
+  ['vGeneralScoreboard',       'played',               'played'],
+  ['vGeneralScoreboard',       'drew',                 'draws'],
+  ['vGeneralScoreboard',       'points',               'points'],
+  ['vPlayerStreaks',           'bestWin',              'bestWinStreak'],
+  ['vPlayerStreaks',           'worstLoss',            'worstLossStreak'],
+  ['vPlayerGoalDiffPeaks',     'peakGoalDiff',         'peakGoalDiff'],
+  ['vPlayerGoalDiffPeaks',     'floorGoalDiff',        'floorGoalDiff'],
+  ['vPlayerAttendanceStreaks', 'bestAttendanceStreak', 'bestAttendanceStreak'],
+  ['vPlayerAttendanceStreaks', 'bestAbsenceStreak',    'bestAbsenceStreak'],
+  ['vMundialitoPlayerStats',   'titles',               'mundialitoTitles'],
+  ['vMundialitoPlayerStats',   'perfectRuns',          'perfectRuns'],
+  ['vMundialitoPlayerStats',   'semis',                'semiRuns'],
+  ['vMundialitoPlayerStats',   'bestSlot',             'bestSlot'],
+];
+
+/**
  * Completa un mapa de hechos con TODOS los jugadores: el que nunca jugo (o
  * nunca lidero nada) tiene que aparecer igual, en cero, porque
  * vPlayerAchievementFacts devuelve una fila por jugador y sin esto
@@ -314,6 +372,11 @@ function withEveryPlayer(playerIds, facts, zero) {
  * torneo + fecha + jugador, asi que hace falta una comparacion propia en vez
  * de forzar el helper de arriba.
  *
+ * Incluye matchdays, el total de fechas del torneo que viaja repetido en cada
+ * fila. Es la columna de la que sale "es la ultima fecha" —y con eso Puro
+ * Huevo—, y es un candidato perfecto a error silencioso: si estuviera de mas en
+ * uno, comebackTitles seguiria dando cero para todos y nadie se enteraria.
+ *
  * En las dos direcciones: valores que no coinciden, filas que la vista
  * devuelve de mas y filas esperadas que la vista no tiene.
  */
@@ -326,7 +389,11 @@ function compareMatchdayStandings(expectedByTournament, actualRows) {
     for (let i = 0; i < tables.length; i++) {
       const matchday = i + 1;
       for (const row of tables[i]) {
-        expectedByKey.set(`${tournamentId}:${matchday}:${row.playerId}`, row);
+        // El total de fechas es, sencillamente, cuantas tablas se armaron.
+        expectedByKey.set(
+          `${tournamentId}:${matchday}:${row.playerId}`,
+          { ...row, matchdays: tables.length },
+        );
       }
     }
   }
@@ -380,11 +447,62 @@ function compareMatchdayStandings(expectedByTournament, actualRows) {
         `position base ${row.position}, esperado ${want.position}`,
       );
     }
+
+    if (Number(row.matchdays) !== want.matchdays) {
+      problems.push(
+        `torneo ${row.tournamentId} fecha ${row.matchday} jugador ${row.playerId}: ` +
+        `matchdays base ${row.matchdays}, esperado ${want.matchdays}`,
+      );
+    }
   }
 
   for (const [key, want] of expectedByKey) {
     if (!seen.has(key)) {
       problems.push(`falta la fila ${key}, la vista no la devuelve (esperado position ${want.position})`);
+    }
+  }
+
+  return problems;
+}
+
+/**
+ * Compara los dos operandos de comebackTitles por (torneo, jugador), en las dos
+ * direcciones. Otra clave compuesta, asi que tampoco entra en compareByPlayerId.
+ */
+function compareFirstLeads(expected, actual) {
+  const problems = [];
+  const seen = new Set();
+
+  for (const row of actual) {
+    const key = `${row.tournamentId}:${row.playerId}`;
+    seen.add(key);
+    const want = expected.get(key);
+
+    if (!want) {
+      problems.push(
+        `primer liderazgo: torneo ${row.tournamentId} jugador ${row.playerId} figura como lider y no lidero nunca`,
+      );
+      continue;
+    }
+    if (Number(row.firstLeadMatchday) !== want.firstLeadMatchday) {
+      problems.push(
+        `primer liderazgo: torneo ${row.tournamentId} jugador ${row.playerId} ` +
+        `firstLeadMatchday base ${row.firstLeadMatchday}, esperado ${want.firstLeadMatchday}`,
+      );
+    }
+    if (Number(row.matchdays) !== want.matchdays) {
+      problems.push(
+        `primer liderazgo: torneo ${row.tournamentId} jugador ${row.playerId} ` +
+        `matchdays base ${row.matchdays}, esperado ${want.matchdays}`,
+      );
+    }
+  }
+
+  for (const [key, want] of expected) {
+    if (!seen.has(key)) {
+      problems.push(
+        `primer liderazgo: falta ${key}, lidero desde la fecha ${want.firstLeadMatchday} y la base no lo trae`,
+      );
     }
   }
 
@@ -490,8 +608,8 @@ async function main() {
     }
 
     const [actualStandings] = await connection.query(
-      'SELECT tournamentId, matchday, playerId, points, goalsDiference, netPoints, winRate, `position` ' +
-      'FROM vTournamentMatchdayStandings',
+      'SELECT tournamentId, matchday, matchdays, playerId, points, goalsDiference, netPoints, ' +
+      'winRate, `position` FROM vTournamentMatchdayStandings',
     );
 
     const matchdayProblems = compareMatchdayStandings(expectedByTournament, actualStandings);
@@ -588,11 +706,7 @@ async function main() {
       { championships: 0, runnerUps: 0, bottomTwo: 0, thirdFromBottom: 0 },
     );
 
-    const [actualFacts] = await connection.query(`
-      SELECT playerId, championships, runnerUps, bottomTwo, thirdFromBottom,
-             leadMatchdaysWithoutTitle, comebackTitles
-      FROM vPlayerAchievementFacts
-    `);
+    const [actualFacts] = await connection.query('SELECT * FROM vPlayerAchievementFacts');
 
     const positionProblems = compareByPlayerId(
       expectedPositionFacts,
@@ -631,12 +745,36 @@ async function main() {
       { leadMatchdaysWithoutTitle: 0, comebackTitles: 0 },
     );
 
-    const leadProblems = compareByPlayerId(
+    const leadFactProblems = compareByPlayerId(
       expectedLeads,
       actualFacts,
       ['leadMatchdaysWithoutTitle', 'comebackTitles'],
       'liderazgos fecha a fecha',
     );
+
+    // Y los dos operandos de los que sale comebackTitles, por separado. El hecho
+    // final da cero para todos —no hay ninguna remontada en el historial— asi
+    // que compararlo solo a el seria comparar ceros contra ceros. Estos dos
+    // numeros, en cambio, valen de todo: primeras fechas 1, 3, 4, 7, 8, 9, 11,
+    // 14 y 22 sobre torneos de 1, 5, 15, 23 y 24 fechas.
+    //
+    // Aca entran TODOS los torneos, no solo los finalizados: la subquery de la
+    // vista tampoco los filtra —el filtro se lo pone el join contra
+    // vTournamentChampions— y de paso suma el torneo en curso.
+    const [actualFirstLeads] = await connection.query(`
+      SELECT ms.tournamentId, ms.playerId,
+             MIN(ms.matchday) AS firstLeadMatchday, MAX(ms.matchdays) AS matchdays
+      FROM vTournamentMatchdayStandings ms
+      WHERE ms.\`position\` = 1
+      GROUP BY ms.tournamentId, ms.playerId
+    `);
+
+    const firstLeadProblems = compareFirstLeads(
+      expectedFirstLeads(expectedByTournament),
+      actualFirstLeads,
+    );
+
+    const leadProblems = [...leadFactProblems, ...firstLeadProblems];
 
     if (leadProblems.length > 0) {
       console.error(`[verify] ${leadProblems.length} DIFERENCIAS en liderazgos fecha a fecha:`);
@@ -645,6 +783,49 @@ async function main() {
       process.exitCode = 1;
     } else {
       console.log('liderazgos fecha a fecha OK');
+    }
+
+    // -------------------------------------------------------------------------
+    // Cableado de las columnas que la vista solo copia
+    // -------------------------------------------------------------------------
+    // Esta comprobacion no verifica ninguna regla: verifica que cada columna
+    // salga de la vista que dice salir. Es lo unico que ata
+    // vPlayerAchievementFacts a sus fuentes, porque todas las demas
+    // comprobaciones leen las fuentes directamente y un cable cruzado adentro de
+    // la vista les pasaria por al lado.
+    const expectedWiring = new Map(playerIds.map((playerId) => [playerId, {}]));
+
+    for (const view of new Set(PASS_THROUGH_COLUMNS.map(([source]) => source))) {
+      const columns = PASS_THROUGH_COLUMNS.filter(([source]) => source === view);
+      const [sourceRows] = await connection.query(
+        `SELECT playerId, ${columns.map(([, from]) => `\`${from}\``).join(', ')} FROM ${view}`,
+      );
+      const byPlayer = new Map(sourceRows.map((row) => [row.playerId, row]));
+
+      for (const playerId of playerIds) {
+        const source = byPlayer.get(playerId);
+        for (const [, from, to] of columns) {
+          // El jugador que no esta en la vista fuente (nunca jugo, nunca
+          // asistio) tiene que salir en cero, que es lo que promete el COALESCE.
+          expectedWiring.get(playerId)[to] = source ? Number(source[from]) : 0;
+        }
+      }
+    }
+
+    const wiringProblems = compareByPlayerId(
+      expectedWiring,
+      actualFacts,
+      PASS_THROUGH_COLUMNS.map(([, , to]) => to),
+      'cableado de columnas',
+    );
+
+    if (wiringProblems.length > 0) {
+      console.error(`[verify] ${wiringProblems.length} DIFERENCIAS en el cableado de columnas:`);
+      for (const problem of wiringProblems.slice(0, 40)) console.error(`  - ${problem}`);
+      if (wiringProblems.length > 40) console.error(`  ... y ${wiringProblems.length - 40} mas`);
+      process.exitCode = 1;
+    } else {
+      console.log(`cableado de ${PASS_THROUGH_COLUMNS.length} columnas OK`);
     }
   } finally {
     await connection.end();

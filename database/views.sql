@@ -1225,7 +1225,7 @@ SELECT
 
   -- Acumulados de la tabla historica
   COALESCE(gen.played, 0)                AS played,
-  COALESCE(gen.draws, 0)                 AS draws,
+  COALESCE(gen.drew, 0)                  AS draws,
   COALESCE(gen.points, 0)                AS points,
 
   -- Rachas y picos
@@ -1301,10 +1301,7 @@ LEFT JOIN (
 -- points es el unico hecho que NO va casteado a SIGNED: la puntuacion del
 -- torneo es DOUBLE y la Clausura paga 0.25 por perder, asi que el cast se
 -- comeria los cuartos de punto.
-LEFT JOIN (
-  SELECT g.playerId, g.played, g.drew AS draws, g.points
-  FROM vGeneralScoreboard g
-) gen ON gen.playerId = p.playerId
+LEFT JOIN vGeneralScoreboard gen ON gen.playerId = p.playerId
 
 LEFT JOIN vPlayerStreaks       str ON str.playerId = p.playerId
 LEFT JOIN vPlayerGoalDiffPeaks pk  ON pk.playerId  = p.playerId
@@ -1335,17 +1332,31 @@ LEFT JOIN (
 
 -- Puro Huevo: torneos ganados sin haber estado primero en ninguna fecha
 -- anterior a la ultima.
+--
+-- La pregunta se responde con un solo numero: cual fue la PRIMERA fecha en la
+-- que el campeon aparecio primero. Si esa fecha es la ultima, no lidero antes y
+-- el titulo es una remontada. Sacar ese numero afuera —en vez de esconder la
+-- regla en un NOT EXISTS correlacionado— deja el hecho reducido a una igualdad
+-- entre dos enteros que el verificador puede comparar por separado, que es lo
+-- unico que se puede hacer con un hecho que hoy da cero para todos.
+--
+-- El INNER JOIN alcanza: el campeon lidera al menos la ultima fecha, siempre,
+-- porque la ultima fecha de la tabla acumulada ES la tabla final del torneo.
 LEFT JOIN (
-  SELECT c.playerId, CAST(COUNT(*) AS SIGNED) AS comebackTitles
+  SELECT c.playerId, CAST(SUM(fl.firstLeadMatchday = fl.matchdays) AS SIGNED) AS comebackTitles
   FROM vTournamentChampions c
-  WHERE NOT EXISTS (
-    SELECT 1
+  INNER JOIN (
+    SELECT
+      ms.tournamentId,
+      ms.playerId,
+      MIN(ms.matchday)  AS firstLeadMatchday,
+      MAX(ms.matchdays) AS matchdays
     FROM vTournamentMatchdayStandings ms
-    WHERE ms.tournamentId = c.tournamentId
-      AND ms.playerId     = c.playerId
-      AND ms.`position`   = 1
-      AND ms.matchday     < ms.matchdays
-  )
+    WHERE ms.`position` = 1
+    GROUP BY ms.tournamentId, ms.playerId
+  ) fl
+    ON fl.tournamentId = c.tournamentId
+   AND fl.playerId     = c.playerId
   GROUP BY c.playerId
 ) cmb ON cmb.playerId = p.playerId
 
