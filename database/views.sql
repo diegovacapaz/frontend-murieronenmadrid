@@ -1023,3 +1023,112 @@ FROM (
   GROUP BY marked.playerId, marked.present, marked.island
 ) i
 GROUP BY i.playerId;
+
+-- =============================================================================
+-- POSICIONES FECHA A FECHA
+-- =============================================================================
+-- La tabla de un torneo despues de cada fecha, no solo al final. La necesitan
+-- dos logros: Pechofrio (liderar 5 fechas y no ganarlo) y Puro Huevo (ganarlo
+-- sin haber liderado hasta la ultima).
+--
+-- Una fecha es cada partido del torneo: en este grupo se juega un partido por
+-- dia y van todos los que van.
+--
+-- La penalizacion se resta completa desde la primera fecha. PlayerPenalties no
+-- guarda cuando se aplico, asi que repartirla en el tiempo seria inventar un
+-- dato; restarla entera tiene ademas la ventaja de que la ultima fecha coincide
+-- exactamente con vTournamentStandings. El costo asumido es que un penalizado
+-- aparece castigado desde el principio.
+-- =============================================================================
+
+-- -----------------------------------------------------------------------------
+-- vTournamentMatchdays — las fechas de cada torneo, numeradas
+-- -----------------------------------------------------------------------------
+-- matchdays (el total) viaja en cada fila para que "es la ultima fecha" se
+-- pueda preguntar sin un segundo join.
+CREATE OR REPLACE VIEW vTournamentMatchdays AS
+SELECT
+  m.tournamentId,
+  m.matchId,
+  m.playedAt,
+  CAST(ROW_NUMBER() OVER (
+    PARTITION BY m.tournamentId ORDER BY m.playedAt, m.matchId
+  ) AS SIGNED) AS matchday,
+  CAST(COUNT(*) OVER (PARTITION BY m.tournamentId) AS SIGNED) AS matchdays
+FROM Matches m;
+
+-- -----------------------------------------------------------------------------
+-- vTournamentMatchdayStandings — la tabla acumulada tras cada fecha
+-- -----------------------------------------------------------------------------
+-- Cada jugador del torneo aparece en TODAS las fechas, haya jugado esa o no:
+-- el que falta no desaparece de la tabla, se queda con los puntos que tenia.
+-- Por eso el cruce entre las fechas y el plantel del torneo antes del LEFT JOIN
+-- contra los resultados.
+--
+-- El join es triangular (cada fecha suma todos los partidos anteriores o igual)
+-- y con quince fechas y quince jugadores eso son un par de miles de filas por
+-- torneo: no hace falta nada mas astuto.
+CREATE OR REPLACE VIEW vTournamentMatchdayStandings AS
+SELECT
+  b.tournamentId,
+  b.matchday,
+  b.matchdays,
+  b.playerId,
+  b.points,
+  b.goalsDiference,
+  b.netPoints,
+  b.winRate,
+  CAST(ROW_NUMBER() OVER (
+    PARTITION BY b.tournamentId, b.matchday
+    ORDER BY b.netPoints DESC, b.goalsDiference DESC, b.winRate DESC, b.playerId ASC
+  ) AS SIGNED) AS `position`
+FROM (
+  SELECT
+    grid.tournamentId,
+    grid.matchday,
+    grid.matchdays,
+    grid.playerId,
+    COALESCE(SUM(
+      CASE played.result
+        WHEN 'W' THEN t.winningPoints
+        WHEN 'D' THEN t.drawingPoints
+        ELSE          t.lossingPoints
+      END), 0)                                              AS points,
+    CAST(COALESCE(SUM(played.goalsDiference), 0) AS SIGNED) AS goalsDiference,
+    COALESCE(SUM(
+      CASE played.result
+        WHEN 'W' THEN t.winningPoints
+        WHEN 'D' THEN t.drawingPoints
+        ELSE          t.lossingPoints
+      END), 0) - COALESCE(pp.penalty, 0)                    AS netPoints,
+    CASE WHEN COUNT(played.matchId) > 0
+         THEN COALESCE(SUM(
+                CASE played.result
+                  WHEN 'W' THEN t.winningPoints
+                  WHEN 'D' THEN t.drawingPoints
+                  ELSE          t.lossingPoints
+                END), 0) / (t.winningPoints * COUNT(played.matchId))
+    END                                                     AS winRate
+  FROM (
+    SELECT md.tournamentId, md.matchday, md.matchdays, md.playedAt, md.matchId, ro.playerId
+    FROM vTournamentMatchdays md
+    INNER JOIN (
+      SELECT DISTINCT tournamentId, playerId FROM MatchPlayers
+    ) ro ON ro.tournamentId = md.tournamentId
+  ) grid
+  INNER JOIN Tournaments t
+    ON t.tournamentId = grid.tournamentId
+  LEFT JOIN PlayerPenalties pp
+    ON pp.tournamentId = grid.tournamentId
+   AND pp.playerId     = grid.playerId
+  LEFT JOIN (
+    SELECT r.playerId, r.matchId, r.result, r.goalsDiference, md.tournamentId, md.matchday
+    FROM vMatchPlayerResults r
+    INNER JOIN vTournamentMatchdays md ON md.matchId = r.matchId
+  ) played
+    ON played.tournamentId = grid.tournamentId
+   AND played.playerId     = grid.playerId
+   AND played.matchday    <= grid.matchday
+  GROUP BY grid.tournamentId, grid.matchday, grid.matchdays, grid.playerId,
+           t.winningPoints, pp.penalty
+) b;

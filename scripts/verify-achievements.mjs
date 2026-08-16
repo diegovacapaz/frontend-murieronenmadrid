@@ -119,6 +119,88 @@ function compareByPlayerId(expected, actual, fields, label) {
   return problems;
 }
 
+/**
+ * La tabla de un torneo despues de cada fecha. Una fecha es cada partido del
+ * torneo. La penalizacion se resta completa desde la primera: PlayerPenalties
+ * no tiene fecha, y asi la ultima fecha coincide con la tabla oficial.
+ *
+ * El desempate es el oficial: puntos netos, diferencia de gol, winrate, id.
+ */
+function expectedMatchdayLeaders(tournament, matches, results, penalties) {
+  const acc = new Map();  // playerId -> { points, maxPoints, diff }
+  const leaders = [];
+
+  for (const match of matches) {
+    for (const row of results.filter((r) => r.matchId === match.matchId)) {
+      const entry = acc.get(row.playerId) ?? { points: 0, maxPoints: 0, diff: 0 };
+      entry.points += row.result === 'W' ? tournament.winningPoints
+                    : row.result === 'D' ? tournament.drawingPoints
+                    : tournament.lossingPoints;
+      entry.maxPoints += tournament.winningPoints;
+      entry.diff += row.goalsDiference;
+      acc.set(row.playerId, entry);
+    }
+
+    const table = [...acc.entries()].map(([playerId, entry]) => ({
+      playerId,
+      netPoints: entry.points - (penalties.get(playerId) ?? 0),
+      diff: entry.diff,
+      winRate: entry.maxPoints > 0 ? entry.points / entry.maxPoints : 0,
+    }));
+
+    table.sort((a, b) =>
+      b.netPoints - a.netPoints ||
+      b.diff - a.diff ||
+      b.winRate - a.winRate ||
+      a.playerId - b.playerId);
+
+    leaders.push(table[0].playerId);
+  }
+  return leaders;   // leaders[i] es el lider despues de la fecha i+1
+}
+
+/**
+ * Compara el lider de cada fecha de cada torneo contra
+ * vTournamentMatchdayStandings. La clave no es el playerId (como en
+ * compareByPlayerId): es compuesta, torneo + fecha, asi que hace falta una
+ * comparacion propia en vez de forzar el helper de arriba.
+ *
+ * Reporta cada diferencia con el torneo, la fecha, quien dice la base y quien
+ * el calculo.
+ */
+function compareMatchdayLeaders(expectedByTournament, actualRows) {
+  const problems = [];
+
+  const actualByKey = new Map();
+  for (const row of actualRows) {
+    actualByKey.set(`${row.tournamentId}:${row.matchday}`, row.playerId);
+  }
+
+  for (const [tournamentId, leaders] of expectedByTournament) {
+    for (let i = 0; i < leaders.length; i++) {
+      const matchday = i + 1;
+      const key = `${tournamentId}:${matchday}`;
+      const expectedLeader = leaders[i];
+
+      if (!actualByKey.has(key)) {
+        problems.push(
+          `torneo ${tournamentId} fecha ${matchday}: la base no tiene lider, esperado ${expectedLeader}`,
+        );
+        continue;
+      }
+
+      const actualLeader = Number(actualByKey.get(key));
+      if (actualLeader !== expectedLeader) {
+        problems.push(
+          `torneo ${tournamentId} fecha ${matchday}: base dice ${actualLeader}, calculo dice ${expectedLeader}`,
+        );
+      }
+    }
+  }
+
+  return problems;
+}
+
 async function main() {
   const rootPassword = process.env.MYSQL_ROOT_PASSWORD;
   const connection = await createConnection({
@@ -161,6 +243,62 @@ async function main() {
       process.exitCode = 1;
     } else {
       console.log('asistencia OK');
+    }
+
+    // -------------------------------------------------------------------------
+    // Posiciones fecha a fecha
+    // -------------------------------------------------------------------------
+    const [tournaments] = await connection.query(
+      'SELECT tournamentId, winningPoints, drawingPoints, lossingPoints FROM Tournaments',
+    );
+    const [tourMatches] = await connection.query(
+      'SELECT matchId, tournamentId, playedAt FROM Matches ORDER BY playedAt, matchId',
+    );
+    const [tourResults] = await connection.query(
+      'SELECT playerId, matchId, result, goalsDiference FROM vMatchPlayerResults',
+    );
+    const [tourPenalties] = await connection.query(
+      'SELECT playerId, tournamentId, penalty FROM PlayerPenalties',
+    );
+
+    const matchesByTournament = new Map();
+    for (const match of tourMatches) {
+      if (!matchesByTournament.has(match.tournamentId)) {
+        matchesByTournament.set(match.tournamentId, []);
+      }
+      matchesByTournament.get(match.tournamentId).push(match);
+    }
+
+    const expectedByTournament = new Map();
+    for (const tournament of tournaments) {
+      const matches = matchesByTournament.get(tournament.tournamentId) ?? [];
+
+      const penalties = new Map();
+      for (const p of tourPenalties) {
+        if (p.tournamentId === tournament.tournamentId) {
+          penalties.set(p.playerId, Number(p.penalty));
+        }
+      }
+
+      const leaders = expectedMatchdayLeaders(tournament, matches, tourResults, penalties);
+      expectedByTournament.set(tournament.tournamentId, leaders);
+    }
+
+    const [actualLeaders] = await connection.query(
+      'SELECT tournamentId, matchday, playerId FROM vTournamentMatchdayStandings WHERE `position` = 1',
+    );
+
+    const matchdayProblems = compareMatchdayLeaders(expectedByTournament, actualLeaders);
+
+    if (matchdayProblems.length > 0) {
+      console.error(`[verify] ${matchdayProblems.length} DIFERENCIAS en fecha a fecha:`);
+      for (const problem of matchdayProblems.slice(0, 40)) console.error(`  - ${problem}`);
+      if (matchdayProblems.length > 40) {
+        console.error(`  ... y ${matchdayProblems.length - 40} mas`);
+      }
+      process.exitCode = 1;
+    } else {
+      console.log('fecha a fecha OK');
     }
   } finally {
     await connection.end();
