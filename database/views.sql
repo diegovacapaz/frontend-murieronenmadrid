@@ -1425,27 +1425,26 @@ LEFT JOIN (
 -- costar 0,13s, lo mismo que los hechos solos, y filtrada por un jugador
 -- tambien. La propiedad de un renglon por regla se conserva, que era el punto.
 --
--- OJO CON LOS TIPOS DEL UNION: MySQL los fija con la primera rama. Sin el CAST
--- a CHAR(24), 'CAZADOR' definiria un CHAR(7) y 'BUSCATE_UN_LABURO' entraria
--- truncado, igual que pasaba con 'CHAMPION' en vMundialitoRuns. Por eso la
--- primera rama castea el code y trae numeros de verdad en progress y target.
+-- EL CAST A CHAR(24) FIJA EL CONTRATO, NO EVITA UN TRUNCAMIENTO: en un UNION
+-- ALL no recursivo (como este) MySQL toma el ancho de la rama MAS LARGA de
+-- TODAS, asi que sin el CAST 'BUSCATE_UN_LABURO' hubiera ensanchado la columna
+-- a 17 sola, sin perder nada. El que si trunca es otro caso: una CTE
+-- RECURSIVA, donde el ancho lo fija solo la rama no recursiva del ancla -eso
+-- es lo que le paso a 'CHAMPION' en vMundialitoRuns-. El CAST igual conviene:
+-- es un piso, no un techo (si el dia de manana una rama trae un code de 30
+-- caracteres, la columna se ensancha a 30 sola), y deja el contrato de salida
+-- explicito en vez de heredado de cual rama se haya escrito primero.
 --
 -- progress / target son NULL en los logros de evento -salir campeon no tiene
 -- media medalla- y el frontend no les dibuja barra.
 --
 -- Estados: 'U' obtenido, 'L' bloqueado, 'B' roto.
 --
--- EL BUG DE MYSQL 8.4 SE FUE CON LAS 28 RAMAS (motor TempTable,
--- bugs.mysql.com/112704): antes, leer esta vista sin filtro fallaba con "Table
--- './tmp/#sql...' doesn't exist" y toda conexion que la consultara tenia que
--- abrir con `SET SESSION internal_tmp_mem_storage_engine = 'MEMORY'`. Lo
--- disparaban las 28 evaluaciones compartiendo la materializacion de los hechos
--- —que adentro usan tres veces la CTE recursiva de vMundialitoRuns—: el motor
--- liberaba esa temporal mientras otra rama todavia la necesitaba. Con una sola
--- evaluacion no queda temporal compartida que liberar de mas. Verificado con el
--- motor TempTable por defecto: SELECT *, COUNT(*), GROUP BY y el verificador
--- entero, sin un solo fallo. El workaround se saco del verificador y el pool
--- del backend no lo necesita.
+-- Nota MySQL 8.4 (bugs.mysql.com/112704): repetir `FROM vPlayerAchievementFacts`
+-- en 28 ramas separadas disparaba un bug del motor TempTable ("Table
+-- './tmp/#sql...' doesn't exist"). LATERAL ya no lo dispara porque evalua los
+-- hechos una sola vez; si esta vista vuelve a escribirse repitiendo esa
+-- evaluacion por rama, puede reaparecer.
 CREATE OR REPLACE VIEW vPlayerAchievements AS
 SELECT f.playerId, r.code, r.state, r.progress, r.target
 FROM vPlayerAchievementFacts f,

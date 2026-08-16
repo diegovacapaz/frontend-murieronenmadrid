@@ -514,39 +514,46 @@ function compareFirstLeads(expected, actual) {
  * repetitivo: si esto y el SQL coinciden, los dos dicen lo mismo.
  *
  * 'U' obtenido, 'L' bloqueado, 'B' roto (la maldicion ya no se puede conseguir).
+ *
+ * Devuelve {state, progress, target} por logro, no solo el estado: un cambio
+ * que deje el CASE del estado intacto pero mueva el target o el signo del
+ * progress (por ejemplo el target de EZ de 8 a 80) no toca ningun state y
+ * pasaria de largo si esta funcion solo comparara eso. progress/target van en
+ * null en los logros de evento, igual que en la vista.
  */
 function expectedStates(f) {
   const reached = (value, target) => (value >= target ? 'U' : 'L');
+  const withProgress = (state, progress, target) => ({ state, progress, target });
   return {
-    CAZADOR:           reached(f.maxWinMargin, 10),
-    LA_CAMA:           reached(f.maxLossMargin, 10),
-    CORONADOS:         reached(f.championships, 1),
-    PRIMER_PERDEDOR:   reached(f.runnerUps, 1),
-    ESTAMOS_EN_LA_B:   reached(f.bottomTwo, 1),
-    LA_PROMOCION:      reached(f.thirdFromBottom, 1),
-    MANO_A_MANO:       reached(f.draws, 10),
-    EL_CORNUDO:        reached(f.bestWinStreak, 10),
-    DEJALO_AMIGO:      reached(f.worstLossStreak, 10),
-    COLECCIONISTA:     reached(f.points, 100),
-    PERRO_VIEJO:       reached(f.played, 50),
-    BUSCATE_UN_LABURO: reached(f.bestAttendanceStreak, 20),
-    SE_BUSCA:          reached(f.bestAbsenceStreak, 10),
-    PICHICHI:          reached(f.peakGoalDiff, 50),
-    PICHI:             f.floorGoalDiff <= -50 ? 'U' : 'L',
-    PECHOFRIO:         reached(f.leadMatchdaysWithoutTitle, 5),
-    PURO_HUEVO:        reached(f.comebackTitles, 1),
-    EX_EQUIPO:         reached(f.maxDerbyLossMargin, 7),
-    HERMOSA_MANIANA:   reached(f.maxDerbyWinMargin, 7),
-    LEYENDA:           reached(f.derbiesPlayed, 8),
-    CAMPEON_DEL_MUNDO: reached(f.mundialitoTitles, 1),
-    JUEGUEN_ENSERIO:   reached(f.unbeatenTitles, 1),
-    INVENTEN_DEPORTE:  reached(f.perfectRuns, 1),
+    CAZADOR:           withProgress(reached(f.maxWinMargin, 10), f.maxWinMargin, 10),
+    LA_CAMA:           withProgress(reached(f.maxLossMargin, 10), f.maxLossMargin, 10),
+    CORONADOS:         withProgress(reached(f.championships, 1), null, null),
+    PRIMER_PERDEDOR:   withProgress(reached(f.runnerUps, 1), null, null),
+    ESTAMOS_EN_LA_B:   withProgress(reached(f.bottomTwo, 1), null, null),
+    LA_PROMOCION:      withProgress(reached(f.thirdFromBottom, 1), null, null),
+    MANO_A_MANO:       withProgress(reached(f.draws, 10), f.draws, 10),
+    EL_CORNUDO:        withProgress(reached(f.bestWinStreak, 10), f.bestWinStreak, 10),
+    DEJALO_AMIGO:      withProgress(reached(f.worstLossStreak, 10), f.worstLossStreak, 10),
+    COLECCIONISTA:     withProgress(reached(f.points, 100), Math.floor(f.points), 100),
+    PERRO_VIEJO:       withProgress(reached(f.played, 50), f.played, 50),
+    BUSCATE_UN_LABURO: withProgress(reached(f.bestAttendanceStreak, 20), f.bestAttendanceStreak, 20),
+    SE_BUSCA:          withProgress(reached(f.bestAbsenceStreak, 10), f.bestAbsenceStreak, 10),
+    PICHICHI:          withProgress(reached(f.peakGoalDiff, 50), f.peakGoalDiff, 50),
+    PICHI:             withProgress(f.floorGoalDiff <= -50 ? 'U' : 'L', -f.floorGoalDiff, 50),
+    PECHOFRIO:         withProgress(reached(f.leadMatchdaysWithoutTitle, 5), f.leadMatchdaysWithoutTitle, 5),
+    PURO_HUEVO:        withProgress(reached(f.comebackTitles, 1), null, null),
+    EX_EQUIPO:         withProgress(reached(f.maxDerbyLossMargin, 7), f.maxDerbyLossMargin, 7),
+    HERMOSA_MANIANA:   withProgress(reached(f.maxDerbyWinMargin, 7), f.maxDerbyWinMargin, 7),
+    LEYENDA:           withProgress(reached(f.derbiesPlayed, 8), f.derbiesPlayed, 8),
+    CAMPEON_DEL_MUNDO: withProgress(reached(f.mundialitoTitles, 1), null, null),
+    JUEGUEN_ENSERIO:   withProgress(reached(f.unbeatenTitles, 1), null, null),
+    INVENTEN_DEPORTE:  withProgress(reached(f.perfectRuns, 1), null, null),
     // Las dos maldiciones: primero se pregunta si ya se rompio.
-    MEXICANO:          f.bestSlot >= 5 ? 'B' : reached(f.shortRuns, 5),
-    ETERNO_CANDIDATO:  f.mundialitoTitles >= 1 ? 'B' : reached(f.semiRuns, 4),
-    REPECHAJE:         reached(f.groupZeroRuns, 1),
-    EZ:                reached(f.maxFinalWinMargin, 8),
-    DIA_PARA_OLVIDO:   reached(f.maxFinalLossMargin, 8),
+    MEXICANO:          withProgress(f.bestSlot >= 5 ? 'B' : reached(f.shortRuns, 5), f.shortRuns, 5),
+    ETERNO_CANDIDATO:  withProgress(f.mundialitoTitles >= 1 ? 'B' : reached(f.semiRuns, 4), f.semiRuns, 4),
+    REPECHAJE:         withProgress(reached(f.groupZeroRuns, 1), null, null),
+    EZ:                withProgress(reached(f.maxFinalWinMargin, 8), f.maxFinalWinMargin, 8),
+    DIA_PARA_OLVIDO:   withProgress(reached(f.maxFinalLossMargin, 8), f.maxFinalLossMargin, 8),
   };
 }
 
@@ -883,34 +890,40 @@ async function main() {
     // expectedStates() son las 28 reglas escritas una por una contra los
     // hechos, sin traducir el SQL de la vista a JS. actualFacts ya trae una
     // fila por jugador (incluido el que nunca jugo, en cero) de la comparacion
-    // de cableado de arriba.
+    // de cableado de arriba. Se comparan las tres columnas -state, progress y
+    // target-, no solo el estado: un target corrido o un progress con el signo
+    // cambiado no mueve ningun state y pasaria de largo si solo se mirara eso.
     //
-    // Ademas de que cada estado coincida, se verifican dos cosas baratas: que
-    // cada jugador tenga exactamente 28 filas (ni una rama de mas ni de menos)
-    // y que todo code que devuelve la vista exista en Achievements (el bug de
-    // truncamiento del UNION que documenta vMundialitoRuns entraria aca: un
-    // code truncado nunca calza con el catalogo).
+    // Ademas se verifican tres cosas baratas: que cada jugador tenga
+    // exactamente 28 filas (ni una rama de mas ni de menos), que todo code que
+    // devuelve la vista exista en Achievements (el bug de truncamiento del
+    // UNION que documenta vMundialitoRuns entraria aca: un code truncado nunca
+    // calza con el catalogo) y, al reves, que todo code de Achievements
+    // aparezca en la vista -si se agrega un logro 29 al catalogo y se olvida la
+    // rama, esto lo agarra-.
     const [catalog] = await connection.query('SELECT code FROM Achievements');
     const catalogCodes = new Set(catalog.map((row) => row.code));
 
     const [actualStates] = await connection.query(
-      'SELECT playerId, code, state FROM vPlayerAchievements',
+      'SELECT playerId, code, state, progress, target FROM vPlayerAchievements',
     );
 
     const expectedByKey = new Map();
     for (const facts of actualFacts) {
-      for (const [code, state] of Object.entries(expectedStates(facts))) {
-        expectedByKey.set(`${facts.playerId}:${code}`, state);
+      for (const [code, want] of Object.entries(expectedStates(facts))) {
+        expectedByKey.set(`${facts.playerId}:${code}`, want);
       }
     }
 
     const stateProblems = [];
     const rowCountByPlayer = new Map();
     const unknownCodes = new Set();
+    const codesInView = new Set();
     const seenKeys = new Set();
 
     for (const row of actualStates) {
       rowCountByPlayer.set(row.playerId, (rowCountByPlayer.get(row.playerId) ?? 0) + 1);
+      codesInView.add(row.code);
       if (!catalogCodes.has(row.code)) unknownCodes.add(row.code);
 
       const key = `${row.playerId}:${row.code}`;
@@ -922,9 +935,21 @@ async function main() {
         );
         continue;
       }
-      if (row.state !== want) {
+      if (row.state !== want.state) {
         stateProblems.push(
-          `estados: jugador ${row.playerId} ${row.code}: base ${row.state}, esperado ${want}`,
+          `estados: jugador ${row.playerId} ${row.code} state: base ${row.state}, esperado ${want.state}`,
+        );
+      }
+      const actualProgress = row.progress === null ? null : Number(row.progress);
+      if (actualProgress !== want.progress) {
+        stateProblems.push(
+          `estados: jugador ${row.playerId} ${row.code} progress: base ${row.progress}, esperado ${want.progress}`,
+        );
+      }
+      const actualTarget = row.target === null ? null : Number(row.target);
+      if (actualTarget !== want.target) {
+        stateProblems.push(
+          `estados: jugador ${row.playerId} ${row.code} target: base ${row.target}, esperado ${want.target}`,
         );
       }
     }
@@ -948,13 +973,20 @@ async function main() {
       );
     }
 
+    const missingCodes = [...catalogCodes].filter((code) => !codesInView.has(code));
+    if (missingCodes.length > 0) {
+      stateProblems.push(
+        `estados: codes de Achievements que la vista nunca devuelve: ${missingCodes.join(', ')}`,
+      );
+    }
+
     if (stateProblems.length > 0) {
       console.error(`[verify] ${stateProblems.length} DIFERENCIAS en estados de logros:`);
       for (const problem of stateProblems.slice(0, 40)) console.error(`  - ${problem}`);
       if (stateProblems.length > 40) console.error(`  ... y ${stateProblems.length - 40} mas`);
       process.exitCode = 1;
     } else {
-      console.log('estados de logros OK (28 por jugador, ningun code truncado)');
+      console.log('estados de logros OK (28 por jugador, state/progress/target, codes en las dos direcciones)');
     }
   } finally {
     await connection.end();
