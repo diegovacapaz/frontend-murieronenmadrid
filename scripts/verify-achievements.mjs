@@ -560,14 +560,13 @@ async function main() {
     database: process.env.MYSQL_DATABASE ?? 'murieron_en_madrid',
   });
 
-  // Bug de MySQL 8.4 en el motor TempTable (bugs.mysql.com/112704): leer
-  // vPlayerAchievements sin filtro dispara "Table './tmp/#sql...' doesn't
-  // exist" porque sus 28 ramas comparten la materializacion de
-  // vPlayerAchievementFacts (que adentro usa la CTE recursiva de
-  // vMundialitoRuns tres veces) y el motor libera esa tabla compartida antes
-  // de tiempo. Volver al motor MEMORY para esta sesion evita el bug; ver el
-  // comentario de vPlayerAchievements en database/views.sql.
-  await connection.query("SET SESSION internal_tmp_mem_storage_engine = 'MEMORY'");
+  // Aca vivia un `SET SESSION internal_tmp_mem_storage_engine = 'MEMORY'`: con
+  // las 28 ramas UNION ALL de la vista vieja, leer vPlayerAchievements sin
+  // filtro fallaba con "Table './tmp/#sql...' doesn't exist" por el bug del
+  // motor TempTable de MySQL 8.4 (bugs.mysql.com/112704). Desde que la vista
+  // evalua los hechos una sola vez con LATERAL no hace falta: ya no hay
+  // materializacion compartida entre ramas que el motor libere antes de
+  // tiempo. Ver el comentario de vPlayerAchievements en database/views.sql.
 
   try {
     const [matches] = await connection.query(`

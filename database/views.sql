@@ -1407,9 +1407,23 @@ LEFT JOIN (
 -- -----------------------------------------------------------------------------
 -- vPlayerAchievements — el estado de cada logro, para cada jugador
 -- -----------------------------------------------------------------------------
--- Una rama por logro, todas con la misma forma: leer un hecho, compararlo con
+-- Una regla por renglon, todas con la misma forma: leer un hecho, compararlo con
 -- un umbral y devolver el estado. Agregar un logro que use hechos que ya estan
 -- calculados es agregar un renglon.
+--
+-- POR QUE LATERAL Y NO 28 UNION ALL: la version anterior repetia
+-- `FROM vPlayerAchievementFacts` en cada una de las 28 ramas, y eso hacia que
+-- los hechos se calcularan 28 veces. Leer la vista entera costaba 3,8s contra
+-- los 0,13s que cuesta un solo pase por los hechos —3,8 dividido 28 da 0,13, la
+-- cuenta cerraba exacta— y filtrar por un jugador no ayudaba en nada, porque el
+-- filtro llega despues de las 28 evaluaciones.
+--
+-- Con LATERAL los hechos se escanean UNA sola vez y por cada fila se despliegan
+-- los 28 logros. El UNION ALL de adentro no toca ninguna tabla: son 28 filas
+-- constantes armadas con las columnas de f, y el plan las muestra como "Rows
+-- fetched before execution", sin materializar nada. La vista entera pasa a
+-- costar 0,13s, lo mismo que los hechos solos, y filtrada por un jugador
+-- tambien. La propiedad de un renglon por regla se conserva, que era el punto.
 --
 -- OJO CON LOS TIPOS DEL UNION: MySQL los fija con la primera rama. Sin el CAST
 -- a CHAR(24), 'CAZADOR' definiria un CHAR(7) y 'BUSCATE_UN_LABURO' entraria
@@ -1421,116 +1435,85 @@ LEFT JOIN (
 --
 -- Estados: 'U' obtenido, 'L' bloqueado, 'B' roto.
 --
--- BUG DE MYSQL 8.4 (motor TempTable, bugs.mysql.com/112704): leer esta vista
--- SIN filtro (SELECT * / COUNT(*) / GROUP BY, exactamente lo que hace el
--- verificador y lo que va a hacer el SP de la Task 7) dispara "Table
--- './tmp/#sql...' doesn't exist". La causa es del motor, no de esta vista: al
--- evaluar sus 28 ramas, cada una reevalua vPlayerAchievementFacts entera -que
--- adentro usa tres veces la CTE recursiva de vMundialitoRuns-, y el motor
--- TempTable tiene una condicion de carrera liberando una tabla temporal
--- compartida mientras otra rama todavia la necesita. Con un WHERE que el
--- optimizador puede resolver a una sola rama (por ejemplo code = 'X') no
--- aparece, porque ahi no llega a compartir nada.
---
--- Mientras no se actualice la imagen de MySQL con el fix, toda conexion que
--- vaya a leer esta vista sin filtrar (el verificador, y el pool del backend
--- cuando la Task 7 la consuma desde el SP) tiene que correr primero:
---   SET SESSION internal_tmp_mem_storage_engine = 'MEMORY';
--- Vuelve al motor de tablas temporales anterior a TempTable (HEAP/MEMORY),
--- que no tiene este bug. Es un ajuste de sesion, no se puede meter adentro de
--- la vista.
+-- EL BUG DE MYSQL 8.4 SE FUE CON LAS 28 RAMAS (motor TempTable,
+-- bugs.mysql.com/112704): antes, leer esta vista sin filtro fallaba con "Table
+-- './tmp/#sql...' doesn't exist" y toda conexion que la consultara tenia que
+-- abrir con `SET SESSION internal_tmp_mem_storage_engine = 'MEMORY'`. Lo
+-- disparaban las 28 evaluaciones compartiendo la materializacion de los hechos
+-- —que adentro usan tres veces la CTE recursiva de vMundialitoRuns—: el motor
+-- liberaba esa temporal mientras otra rama todavia la necesitaba. Con una sola
+-- evaluacion no queda temporal compartida que liberar de mas. Verificado con el
+-- motor TempTable por defecto: SELECT *, COUNT(*), GROUP BY y el verificador
+-- entero, sin un solo fallo. El workaround se saco del verificador y el pool
+-- del backend no lo necesita.
 CREATE OR REPLACE VIEW vPlayerAchievements AS
-SELECT f.playerId, CAST('CAZADOR' AS CHAR(24)) AS code,
-       CASE WHEN f.maxWinMargin >= 10 THEN 'U' ELSE 'L' END AS state,
-       CAST(f.maxWinMargin AS SIGNED) AS progress, CAST(10 AS SIGNED) AS target
-FROM vPlayerAchievementFacts f
-UNION ALL SELECT playerId, 'LA_CAMA',
-       CASE WHEN maxLossMargin >= 10 THEN 'U' ELSE 'L' END, maxLossMargin, 10
-FROM vPlayerAchievementFacts
-UNION ALL SELECT playerId, 'CORONADOS',
-       CASE WHEN championships >= 1 THEN 'U' ELSE 'L' END, NULL, NULL
-FROM vPlayerAchievementFacts
-UNION ALL SELECT playerId, 'PRIMER_PERDEDOR',
-       CASE WHEN runnerUps >= 1 THEN 'U' ELSE 'L' END, NULL, NULL
-FROM vPlayerAchievementFacts
-UNION ALL SELECT playerId, 'ESTAMOS_EN_LA_B',
-       CASE WHEN bottomTwo >= 1 THEN 'U' ELSE 'L' END, NULL, NULL
-FROM vPlayerAchievementFacts
-UNION ALL SELECT playerId, 'LA_PROMOCION',
-       CASE WHEN thirdFromBottom >= 1 THEN 'U' ELSE 'L' END, NULL, NULL
-FROM vPlayerAchievementFacts
-UNION ALL SELECT playerId, 'MANO_A_MANO',
-       CASE WHEN draws >= 10 THEN 'U' ELSE 'L' END, draws, 10
-FROM vPlayerAchievementFacts
-UNION ALL SELECT playerId, 'EL_CORNUDO',
-       CASE WHEN bestWinStreak >= 10 THEN 'U' ELSE 'L' END, bestWinStreak, 10
-FROM vPlayerAchievementFacts
-UNION ALL SELECT playerId, 'DEJALO_AMIGO',
-       CASE WHEN worstLossStreak >= 10 THEN 'U' ELSE 'L' END, worstLossStreak, 10
-FROM vPlayerAchievementFacts
-UNION ALL SELECT playerId, 'COLECCIONISTA',
-       CASE WHEN points >= 100 THEN 'U' ELSE 'L' END, FLOOR(points), 100
-FROM vPlayerAchievementFacts
-UNION ALL SELECT playerId, 'PERRO_VIEJO',
-       CASE WHEN played >= 50 THEN 'U' ELSE 'L' END, played, 50
-FROM vPlayerAchievementFacts
-UNION ALL SELECT playerId, 'BUSCATE_UN_LABURO',
-       CASE WHEN bestAttendanceStreak >= 20 THEN 'U' ELSE 'L' END, bestAttendanceStreak, 20
-FROM vPlayerAchievementFacts
-UNION ALL SELECT playerId, 'SE_BUSCA',
-       CASE WHEN bestAbsenceStreak >= 10 THEN 'U' ELSE 'L' END, bestAbsenceStreak, 10
-FROM vPlayerAchievementFacts
-UNION ALL SELECT playerId, 'PICHICHI',
-       CASE WHEN peakGoalDiff >= 50 THEN 'U' ELSE 'L' END, peakGoalDiff, 50
-FROM vPlayerAchievementFacts
--- El unico con umbral negativo: el progreso viaja en positivo para que la barra
--- del frontend no tenga que saber de signos.
-UNION ALL SELECT playerId, 'PICHI',
-       CASE WHEN floorGoalDiff <= -50 THEN 'U' ELSE 'L' END, -floorGoalDiff, 50
-FROM vPlayerAchievementFacts
-UNION ALL SELECT playerId, 'PECHOFRIO',
-       CASE WHEN leadMatchdaysWithoutTitle >= 5 THEN 'U' ELSE 'L' END, leadMatchdaysWithoutTitle, 5
-FROM vPlayerAchievementFacts
-UNION ALL SELECT playerId, 'PURO_HUEVO',
-       CASE WHEN comebackTitles >= 1 THEN 'U' ELSE 'L' END, NULL, NULL
-FROM vPlayerAchievementFacts
-UNION ALL SELECT playerId, 'EX_EQUIPO',
-       CASE WHEN maxDerbyLossMargin >= 7 THEN 'U' ELSE 'L' END, maxDerbyLossMargin, 7
-FROM vPlayerAchievementFacts
-UNION ALL SELECT playerId, 'HERMOSA_MANIANA',
-       CASE WHEN maxDerbyWinMargin >= 7 THEN 'U' ELSE 'L' END, maxDerbyWinMargin, 7
-FROM vPlayerAchievementFacts
-UNION ALL SELECT playerId, 'LEYENDA',
-       CASE WHEN derbiesPlayed >= 8 THEN 'U' ELSE 'L' END, derbiesPlayed, 8
-FROM vPlayerAchievementFacts
-UNION ALL SELECT playerId, 'CAMPEON_DEL_MUNDO',
-       CASE WHEN mundialitoTitles >= 1 THEN 'U' ELSE 'L' END, NULL, NULL
-FROM vPlayerAchievementFacts
-UNION ALL SELECT playerId, 'JUEGUEN_ENSERIO',
-       CASE WHEN unbeatenTitles >= 1 THEN 'U' ELSE 'L' END, NULL, NULL
-FROM vPlayerAchievementFacts
-UNION ALL SELECT playerId, 'INVENTEN_DEPORTE',
-       CASE WHEN perfectRuns >= 1 THEN 'U' ELSE 'L' END, NULL, NULL
-FROM vPlayerAchievementFacts
--- Maldicion: llegar al quinto partido una sola vez la rompe para siempre, haya
--- alcanzado o no las cinco corridas cortas.
-UNION ALL SELECT playerId, 'MEXICANO',
-       CASE WHEN bestSlot >= 5 THEN 'B'
-            WHEN shortRuns >= 5 THEN 'U'
-            ELSE 'L' END, shortRuns, 5
-FROM vPlayerAchievementFacts
--- Maldicion: la primera copa deja de ser candidato para siempre.
-UNION ALL SELECT playerId, 'ETERNO_CANDIDATO',
-       CASE WHEN mundialitoTitles >= 1 THEN 'B'
-            WHEN semiRuns >= 4 THEN 'U'
-            ELSE 'L' END, semiRuns, 4
-FROM vPlayerAchievementFacts
-UNION ALL SELECT playerId, 'REPECHAJE',
-       CASE WHEN groupZeroRuns >= 1 THEN 'U' ELSE 'L' END, NULL, NULL
-FROM vPlayerAchievementFacts
-UNION ALL SELECT playerId, 'EZ',
-       CASE WHEN maxFinalWinMargin >= 8 THEN 'U' ELSE 'L' END, maxFinalWinMargin, 8
-FROM vPlayerAchievementFacts
-UNION ALL SELECT playerId, 'DIA_PARA_OLVIDO',
-       CASE WHEN maxFinalLossMargin >= 8 THEN 'U' ELSE 'L' END, maxFinalLossMargin, 8
-FROM vPlayerAchievementFacts;
+SELECT f.playerId, r.code, r.state, r.progress, r.target
+FROM vPlayerAchievementFacts f,
+LATERAL (
+  SELECT CAST('CAZADOR' AS CHAR(24)) AS code,
+         CASE WHEN f.maxWinMargin >= 10 THEN 'U' ELSE 'L' END AS state,
+         CAST(f.maxWinMargin AS SIGNED) AS progress, CAST(10 AS SIGNED) AS target
+  UNION ALL SELECT 'LA_CAMA',
+         CASE WHEN f.maxLossMargin >= 10 THEN 'U' ELSE 'L' END, f.maxLossMargin, 10
+  UNION ALL SELECT 'CORONADOS',
+         CASE WHEN f.championships >= 1 THEN 'U' ELSE 'L' END, NULL, NULL
+  UNION ALL SELECT 'PRIMER_PERDEDOR',
+         CASE WHEN f.runnerUps >= 1 THEN 'U' ELSE 'L' END, NULL, NULL
+  UNION ALL SELECT 'ESTAMOS_EN_LA_B',
+         CASE WHEN f.bottomTwo >= 1 THEN 'U' ELSE 'L' END, NULL, NULL
+  UNION ALL SELECT 'LA_PROMOCION',
+         CASE WHEN f.thirdFromBottom >= 1 THEN 'U' ELSE 'L' END, NULL, NULL
+  UNION ALL SELECT 'MANO_A_MANO',
+         CASE WHEN f.draws >= 10 THEN 'U' ELSE 'L' END, f.draws, 10
+  UNION ALL SELECT 'EL_CORNUDO',
+         CASE WHEN f.bestWinStreak >= 10 THEN 'U' ELSE 'L' END, f.bestWinStreak, 10
+  UNION ALL SELECT 'DEJALO_AMIGO',
+         CASE WHEN f.worstLossStreak >= 10 THEN 'U' ELSE 'L' END, f.worstLossStreak, 10
+  UNION ALL SELECT 'COLECCIONISTA',
+         CASE WHEN f.points >= 100 THEN 'U' ELSE 'L' END, FLOOR(f.points), 100
+  UNION ALL SELECT 'PERRO_VIEJO',
+         CASE WHEN f.played >= 50 THEN 'U' ELSE 'L' END, f.played, 50
+  UNION ALL SELECT 'BUSCATE_UN_LABURO',
+         CASE WHEN f.bestAttendanceStreak >= 20 THEN 'U' ELSE 'L' END, f.bestAttendanceStreak, 20
+  UNION ALL SELECT 'SE_BUSCA',
+         CASE WHEN f.bestAbsenceStreak >= 10 THEN 'U' ELSE 'L' END, f.bestAbsenceStreak, 10
+  UNION ALL SELECT 'PICHICHI',
+         CASE WHEN f.peakGoalDiff >= 50 THEN 'U' ELSE 'L' END, f.peakGoalDiff, 50
+  -- El unico con umbral negativo: el progreso viaja en positivo para que la
+  -- barra del frontend no tenga que saber de signos.
+  UNION ALL SELECT 'PICHI',
+         CASE WHEN f.floorGoalDiff <= -50 THEN 'U' ELSE 'L' END, -f.floorGoalDiff, 50
+  UNION ALL SELECT 'PECHOFRIO',
+         CASE WHEN f.leadMatchdaysWithoutTitle >= 5 THEN 'U' ELSE 'L' END, f.leadMatchdaysWithoutTitle, 5
+  UNION ALL SELECT 'PURO_HUEVO',
+         CASE WHEN f.comebackTitles >= 1 THEN 'U' ELSE 'L' END, NULL, NULL
+  UNION ALL SELECT 'EX_EQUIPO',
+         CASE WHEN f.maxDerbyLossMargin >= 7 THEN 'U' ELSE 'L' END, f.maxDerbyLossMargin, 7
+  UNION ALL SELECT 'HERMOSA_MANIANA',
+         CASE WHEN f.maxDerbyWinMargin >= 7 THEN 'U' ELSE 'L' END, f.maxDerbyWinMargin, 7
+  UNION ALL SELECT 'LEYENDA',
+         CASE WHEN f.derbiesPlayed >= 8 THEN 'U' ELSE 'L' END, f.derbiesPlayed, 8
+  UNION ALL SELECT 'CAMPEON_DEL_MUNDO',
+         CASE WHEN f.mundialitoTitles >= 1 THEN 'U' ELSE 'L' END, NULL, NULL
+  UNION ALL SELECT 'JUEGUEN_ENSERIO',
+         CASE WHEN f.unbeatenTitles >= 1 THEN 'U' ELSE 'L' END, NULL, NULL
+  UNION ALL SELECT 'INVENTEN_DEPORTE',
+         CASE WHEN f.perfectRuns >= 1 THEN 'U' ELSE 'L' END, NULL, NULL
+  -- Maldicion: llegar al quinto partido una sola vez la rompe para siempre, haya
+  -- alcanzado o no las cinco corridas cortas.
+  UNION ALL SELECT 'MEXICANO',
+         CASE WHEN f.bestSlot >= 5 THEN 'B'
+              WHEN f.shortRuns >= 5 THEN 'U'
+              ELSE 'L' END, f.shortRuns, 5
+  -- Maldicion: la primera copa deja de ser candidato para siempre.
+  UNION ALL SELECT 'ETERNO_CANDIDATO',
+         CASE WHEN f.mundialitoTitles >= 1 THEN 'B'
+              WHEN f.semiRuns >= 4 THEN 'U'
+              ELSE 'L' END, f.semiRuns, 4
+  UNION ALL SELECT 'REPECHAJE',
+         CASE WHEN f.groupZeroRuns >= 1 THEN 'U' ELSE 'L' END, NULL, NULL
+  UNION ALL SELECT 'EZ',
+         CASE WHEN f.maxFinalWinMargin >= 8 THEN 'U' ELSE 'L' END, f.maxFinalWinMargin, 8
+  UNION ALL SELECT 'DIA_PARA_OLVIDO',
+         CASE WHEN f.maxFinalLossMargin >= 8 THEN 'U' ELSE 'L' END, f.maxFinalLossMargin, 8
+) r;
