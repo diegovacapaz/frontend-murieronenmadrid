@@ -1065,6 +1065,12 @@ FROM Matches m;
 -- Por eso el cruce entre las fechas y el plantel del torneo antes del LEFT JOIN
 -- contra los resultados.
 --
+-- OJO con el CASE de puntos: no alcanza con hacer CASE played.result, porque
+-- cuando el LEFT JOIN no encuentra partido (todavia no debuto para esta fecha)
+-- played.result es NULL, y un CASE simple sobre NULL no matchea ni 'W' ni 'D'
+-- y cae en el ELSE. Sin el WHEN explicito de played.matchId IS NULL, "no jugo
+-- todavia" se contaba como derrota y sumaba lossingPoints de regalo.
+--
 -- El join es triangular (cada fecha suma todos los partidos anteriores o igual)
 -- y con quince fechas y quince jugadores eso son un par de miles de filas por
 -- torneo: no hace falta nada mas astuto.
@@ -1089,24 +1095,27 @@ FROM (
     grid.matchdays,
     grid.playerId,
     COALESCE(SUM(
-      CASE played.result
-        WHEN 'W' THEN t.winningPoints
-        WHEN 'D' THEN t.drawingPoints
-        ELSE          t.lossingPoints
+      CASE
+        WHEN played.matchId IS NULL THEN 0
+        WHEN played.result = 'W'    THEN t.winningPoints
+        WHEN played.result = 'D'    THEN t.drawingPoints
+        ELSE                             t.lossingPoints
       END), 0)                                              AS points,
     CAST(COALESCE(SUM(played.goalsDiference), 0) AS SIGNED) AS goalsDiference,
     COALESCE(SUM(
-      CASE played.result
-        WHEN 'W' THEN t.winningPoints
-        WHEN 'D' THEN t.drawingPoints
-        ELSE          t.lossingPoints
+      CASE
+        WHEN played.matchId IS NULL THEN 0
+        WHEN played.result = 'W'    THEN t.winningPoints
+        WHEN played.result = 'D'    THEN t.drawingPoints
+        ELSE                             t.lossingPoints
       END), 0) - COALESCE(pp.penalty, 0)                    AS netPoints,
     CASE WHEN COUNT(played.matchId) > 0
          THEN COALESCE(SUM(
-                CASE played.result
-                  WHEN 'W' THEN t.winningPoints
-                  WHEN 'D' THEN t.drawingPoints
-                  ELSE          t.lossingPoints
+                CASE
+                  WHEN played.matchId IS NULL THEN 0
+                  WHEN played.result = 'W'    THEN t.winningPoints
+                  WHEN played.result = 'D'    THEN t.drawingPoints
+                  ELSE                             t.lossingPoints
                 END), 0) / (t.winningPoints * COUNT(played.matchId))
     END                                                     AS winRate
   FROM (

@@ -120,15 +120,26 @@ function compareByPlayerId(expected, actual, fields, label) {
 }
 
 /**
- * La tabla de un torneo despues de cada fecha. Una fecha es cada partido del
- * torneo. La penalizacion se resta completa desde la primera: PlayerPenalties
- * no tiene fecha, y asi la ultima fecha coincide con la tabla oficial.
+ * La tabla COMPLETA de un torneo despues de cada fecha —todo el plantel, no
+ * solo el lider—. Una fecha es cada partido del torneo. El plantel arranca
+ * en cero desde antes de la primera fecha: el que todavia no debuto aparece
+ * igual, con cero puntos, cero diferencia y sin winrate (null, como hace la
+ * vista cuando maxPoints es 0).
+ *
+ * La penalizacion se resta completa desde la primera: PlayerPenalties no
+ * tiene fecha, y asi la ultima fecha coincide con la tabla oficial.
  *
  * El desempate es el oficial: puntos netos, diferencia de gol, winrate, id.
+ * MySQL trata NULL como el valor mas chico en un ORDER BY ... DESC, asi que
+ * el que no jugo nada todavia (winRate null) siempre pierde ese desempate.
  */
-function expectedMatchdayLeaders(tournament, matches, results, penalties) {
+function expectedMatchdayStandings(tournament, matches, results, penalties, roster) {
   const acc = new Map();  // playerId -> { points, maxPoints, diff }
-  const leaders = [];
+  for (const playerId of roster) {
+    acc.set(playerId, { points: 0, maxPoints: 0, diff: 0 });
+  }
+
+  const tables = [];
 
   for (const match of matches) {
     for (const row of results.filter((r) => r.matchId === match.matchId)) {
@@ -143,58 +154,118 @@ function expectedMatchdayLeaders(tournament, matches, results, penalties) {
 
     const table = [...acc.entries()].map(([playerId, entry]) => ({
       playerId,
+      points: entry.points,
       netPoints: entry.points - (penalties.get(playerId) ?? 0),
-      diff: entry.diff,
-      winRate: entry.maxPoints > 0 ? entry.points / entry.maxPoints : 0,
+      goalsDiference: entry.diff,
+      winRate: entry.maxPoints > 0 ? entry.points / entry.maxPoints : null,
     }));
 
     table.sort((a, b) =>
       b.netPoints - a.netPoints ||
-      b.diff - a.diff ||
-      b.winRate - a.winRate ||
+      b.goalsDiference - a.goalsDiference ||
+      compareWinRateDesc(a.winRate, b.winRate) ||
       a.playerId - b.playerId);
 
-    leaders.push(table[0].playerId);
+    table.forEach((row, index) => { row.position = index + 1; });
+
+    tables.push(table);
   }
-  return leaders;   // leaders[i] es el lider despues de la fecha i+1
+  return tables;   // tables[i] es la tabla completa despues de la fecha i+1
 }
 
 /**
- * Compara el lider de cada fecha de cada torneo contra
- * vTournamentMatchdayStandings. La clave no es el playerId (como en
- * compareByPlayerId): es compuesta, torneo + fecha, asi que hace falta una
- * comparacion propia en vez de forzar el helper de arriba.
- *
- * Reporta cada diferencia con el torneo, la fecha, quien dice la base y quien
- * el calculo.
+ * DESC tratando null como el valor mas chico, igual que MySQL en un
+ * `ORDER BY ... DESC`: el que no jugo nada (sin winrate) va siempre al final
+ * de este desempate.
  */
-function compareMatchdayLeaders(expectedByTournament, actualRows) {
-  const problems = [];
+function compareWinRateDesc(a, b) {
+  if (a === b) return 0;
+  if (a === null) return 1;
+  if (b === null) return -1;
+  return b - a;
+}
 
-  const actualByKey = new Map();
-  for (const row of actualRows) {
-    actualByKey.set(`${row.tournamentId}:${row.matchday}`, row.playerId);
+/**
+ * Compara la tabla COMPLETA (todas las filas, todas las columnas derivadas)
+ * contra vTournamentMatchdayStandings, torneo por torneo y fecha por fecha.
+ * No alcanza con mirar el lider: la mayoria de las filas de esa vista son
+ * puestos 2..N, y si nadie las mira un bug ahi no se entera nadie.
+ *
+ * La clave no es el playerId (como en compareByPlayerId): es compuesta,
+ * torneo + fecha + jugador, asi que hace falta una comparacion propia en vez
+ * de forzar el helper de arriba.
+ *
+ * En las dos direcciones: valores que no coinciden, filas que la vista
+ * devuelve de mas y filas esperadas que la vista no tiene.
+ */
+function compareMatchdayStandings(expectedByTournament, actualRows) {
+  const problems = [];
+  const EPS = 1e-9;
+
+  const expectedByKey = new Map();
+  for (const [tournamentId, tables] of expectedByTournament) {
+    for (let i = 0; i < tables.length; i++) {
+      const matchday = i + 1;
+      for (const row of tables[i]) {
+        expectedByKey.set(`${tournamentId}:${matchday}:${row.playerId}`, row);
+      }
+    }
   }
 
-  for (const [tournamentId, leaders] of expectedByTournament) {
-    for (let i = 0; i < leaders.length; i++) {
-      const matchday = i + 1;
-      const key = `${tournamentId}:${matchday}`;
-      const expectedLeader = leaders[i];
+  const seen = new Set();
+  for (const row of actualRows) {
+    const key = `${row.tournamentId}:${row.matchday}:${row.playerId}`;
+    seen.add(key);
+    const want = expectedByKey.get(key);
 
-      if (!actualByKey.has(key)) {
-        problems.push(
-          `torneo ${tournamentId} fecha ${matchday}: la base no tiene lider, esperado ${expectedLeader}`,
-        );
-        continue;
-      }
+    if (!want) {
+      problems.push(
+        `torneo ${row.tournamentId} fecha ${row.matchday}: jugador ${row.playerId} aparece en la vista y no deberia`,
+      );
+      continue;
+    }
 
-      const actualLeader = Number(actualByKey.get(key));
-      if (actualLeader !== expectedLeader) {
-        problems.push(
-          `torneo ${tournamentId} fecha ${matchday}: base dice ${actualLeader}, calculo dice ${expectedLeader}`,
-        );
-      }
+    if (Math.abs(Number(row.points) - want.points) > EPS) {
+      problems.push(
+        `torneo ${row.tournamentId} fecha ${row.matchday} jugador ${row.playerId}: ` +
+        `points base ${row.points}, esperado ${want.points}`,
+      );
+    }
+    if (Number(row.goalsDiference) !== want.goalsDiference) {
+      problems.push(
+        `torneo ${row.tournamentId} fecha ${row.matchday} jugador ${row.playerId}: ` +
+        `goalsDiference base ${row.goalsDiference}, esperado ${want.goalsDiference}`,
+      );
+    }
+    if (Math.abs(Number(row.netPoints) - want.netPoints) > EPS) {
+      problems.push(
+        `torneo ${row.tournamentId} fecha ${row.matchday} jugador ${row.playerId}: ` +
+        `netPoints base ${row.netPoints}, esperado ${want.netPoints}`,
+      );
+    }
+
+    const actualWinRate = row.winRate === null ? null : Number(row.winRate);
+    const winRateMismatch = actualWinRate === null || want.winRate === null
+      ? actualWinRate !== want.winRate
+      : Math.abs(actualWinRate - want.winRate) > EPS;
+    if (winRateMismatch) {
+      problems.push(
+        `torneo ${row.tournamentId} fecha ${row.matchday} jugador ${row.playerId}: ` +
+        `winRate base ${row.winRate}, esperado ${want.winRate}`,
+      );
+    }
+
+    if (Number(row.position) !== want.position) {
+      problems.push(
+        `torneo ${row.tournamentId} fecha ${row.matchday} jugador ${row.playerId}: ` +
+        `position base ${row.position}, esperado ${want.position}`,
+      );
+    }
+  }
+
+  for (const [key, want] of expectedByKey) {
+    if (!seen.has(key)) {
+      problems.push(`falta la fila ${key}, la vista no la devuelve (esperado position ${want.position})`);
     }
   }
 
@@ -260,6 +331,12 @@ async function main() {
     const [tourPenalties] = await connection.query(
       'SELECT playerId, tournamentId, penalty FROM PlayerPenalties',
     );
+    // El plantel de cada torneo: los mismos jugadores que cruza la vista antes
+    // del LEFT JOIN contra los resultados, para que el que no debuto todavia
+    // aparezca igual en la tabla, en cero.
+    const [tourRoster] = await connection.query(
+      'SELECT DISTINCT tournamentId, playerId FROM MatchPlayers',
+    );
 
     const matchesByTournament = new Map();
     for (const match of tourMatches) {
@@ -269,9 +346,18 @@ async function main() {
       matchesByTournament.get(match.tournamentId).push(match);
     }
 
+    const rosterByTournament = new Map();
+    for (const row of tourRoster) {
+      if (!rosterByTournament.has(row.tournamentId)) {
+        rosterByTournament.set(row.tournamentId, []);
+      }
+      rosterByTournament.get(row.tournamentId).push(row.playerId);
+    }
+
     const expectedByTournament = new Map();
     for (const tournament of tournaments) {
       const matches = matchesByTournament.get(tournament.tournamentId) ?? [];
+      const roster = rosterByTournament.get(tournament.tournamentId) ?? [];
 
       const penalties = new Map();
       for (const p of tourPenalties) {
@@ -280,15 +366,16 @@ async function main() {
         }
       }
 
-      const leaders = expectedMatchdayLeaders(tournament, matches, tourResults, penalties);
-      expectedByTournament.set(tournament.tournamentId, leaders);
+      const tables = expectedMatchdayStandings(tournament, matches, tourResults, penalties, roster);
+      expectedByTournament.set(tournament.tournamentId, tables);
     }
 
-    const [actualLeaders] = await connection.query(
-      'SELECT tournamentId, matchday, playerId FROM vTournamentMatchdayStandings WHERE `position` = 1',
+    const [actualStandings] = await connection.query(
+      'SELECT tournamentId, matchday, playerId, points, goalsDiference, netPoints, winRate, `position` ' +
+      'FROM vTournamentMatchdayStandings',
     );
 
-    const matchdayProblems = compareMatchdayLeaders(expectedByTournament, actualLeaders);
+    const matchdayProblems = compareMatchdayStandings(expectedByTournament, actualStandings);
 
     if (matchdayProblems.length > 0) {
       console.error(`[verify] ${matchdayProblems.length} DIFERENCIAS en fecha a fecha:`);
