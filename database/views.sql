@@ -946,3 +946,80 @@ LEFT JOIN (
   WHERE s.isOpen = 1
   GROUP BY s.playerId
 ) open ON open.playerId = p.playerId;
+
+-- =============================================================================
+-- ASISTENCIA
+-- =============================================================================
+-- La base guarda quien jugo, nunca quien falto. La ausencia hay que deducirla:
+-- hubo partido, vos no estabas.
+--
+-- Apoya en un supuesto del grupo: cuando se juega, juegan todos los que fueron,
+-- repartidos en los dos equipos. Por eso no figurar en la convocatoria es haber
+-- faltado. Hay un partido cargado con una sola formacion, y ahi medio plantel
+-- figura como ausente: es un dato incompleto conocido.
+--
+-- Se excluyen los torneos wasTracked = FALSE. De esos solo sobrevivio la tabla
+-- y sus partidos son reconstrucciones: contarlos inventaria ausencias que nadie
+-- tuvo.
+-- =============================================================================
+
+-- -----------------------------------------------------------------------------
+-- vPlayerAttendance — presente o ausente en cada partido, desde el debut
+-- -----------------------------------------------------------------------------
+-- La ventana de cada jugador arranca en su primer partido y llega hasta hoy: el
+-- que se fue del grupo sigue acumulando ausencias, que es justamente el chiste
+-- de "Se busca!".
+CREATE OR REPLACE VIEW vPlayerAttendance AS
+WITH tracked AS (
+  SELECT m.matchId, m.playedAt
+  FROM Matches m
+  INNER JOIN Tournaments t ON t.tournamentId = m.tournamentId
+  WHERE t.wasTracked = TRUE
+),
+debut AS (
+  SELECT mp.playerId, MIN(tr.playedAt) AS debutAt
+  FROM MatchPlayers mp
+  INNER JOIN tracked tr ON tr.matchId = mp.matchId
+  GROUP BY mp.playerId
+)
+SELECT
+  d.playerId,
+  tr.matchId,
+  tr.playedAt,
+  CAST(mp.playerId IS NOT NULL AS SIGNED) AS present,
+  CAST(ROW_NUMBER() OVER (
+    PARTITION BY d.playerId ORDER BY tr.playedAt, tr.matchId
+  ) AS SIGNED) AS n
+FROM debut d
+INNER JOIN tracked tr
+  ON tr.playedAt >= d.debutAt
+LEFT JOIN MatchPlayers mp
+  ON mp.matchId  = tr.matchId
+ AND mp.playerId = d.playerId;
+
+-- -----------------------------------------------------------------------------
+-- vPlayerAttendanceStreaks — la racha mas larga de cada tipo
+-- -----------------------------------------------------------------------------
+-- Mismo truco de islas que vPlayerStreakIslands: la diferencia entre la
+-- numeracion global y la numeracion dentro del tipo se mantiene constante
+-- mientras la racha no se corta, asi que agrupar por esa diferencia da los
+-- tramos.
+CREATE OR REPLACE VIEW vPlayerAttendanceStreaks AS
+SELECT
+  i.playerId,
+  CAST(COALESCE(MAX(CASE WHEN i.present = 1 THEN i.length END), 0) AS SIGNED) AS bestAttendanceStreak,
+  CAST(COALESCE(MAX(CASE WHEN i.present = 0 THEN i.length END), 0) AS SIGNED) AS bestAbsenceStreak
+FROM (
+  SELECT marked.playerId, marked.present, COUNT(*) AS length
+  FROM (
+    SELECT
+      a.playerId,
+      a.present,
+      a.n - ROW_NUMBER() OVER (
+        PARTITION BY a.playerId, a.present ORDER BY a.n
+      ) AS island
+    FROM vPlayerAttendance a
+  ) marked
+  GROUP BY marked.playerId, marked.present, marked.island
+) i
+GROUP BY i.playerId;
