@@ -1177,3 +1177,218 @@ FROM (
   FROM vMatchPlayerResults r
 ) s
 GROUP BY s.playerId;
+
+-- =============================================================================
+-- LOGROS
+-- =============================================================================
+-- Los logros no se guardan: se deducen del historial cada vez que alguien abre
+-- la solapa. La regla "una vez obtenido, nunca se vuelve atras" se cumple sola
+-- porque cada condicion esta escrita como hecho historico —"alguna vez paso
+-- X"— y el historial nunca se achica.
+--
+-- Las dos unicas excepciones son Mexicano y Eterno Candidato: son maldiciones,
+-- y se rompen cuando el jugador mejora. Ese estado tiene su propio valor ('B').
+-- =============================================================================
+
+-- -----------------------------------------------------------------------------
+-- vPlayerAchievementFacts — los numeros crudos que miran las reglas
+-- -----------------------------------------------------------------------------
+-- Una fila por jugador, con TODOS los jugadores: el que no jugo nunca aparece
+-- con ceros, para que su solapa abra igual con las 28 en gris.
+--
+-- Cada LEFT JOIN resuelve una familia de hechos. Ninguno aplica umbrales: eso
+-- es trabajo de vPlayerAchievements. Aca solo se cuenta.
+--
+-- Sobre el torneo 2024 (wasTracked = FALSE): sus cinco partidos son sinteticos
+-- y tienen diferencia de gol 0, asi que no disparan ninguna goleada. Las rachas
+-- si los cuentan, porque salen de vPlayerStreaks, que es el mismo numero que el
+-- perfil ya publica: si el perfil dice "mejor racha 11", la medalla de 10 no
+-- puede estar en gris. La asistencia y el mundialito los excluyen por su cuenta.
+CREATE OR REPLACE VIEW vPlayerAchievementFacts AS
+SELECT
+  p.playerId,
+
+  -- Partidos sueltos
+  COALESCE(mar.maxWinMargin, 0)          AS maxWinMargin,
+  COALESCE(mar.maxLossMargin, 0)         AS maxLossMargin,
+
+  -- Superclasicos
+  COALESCE(der.derbiesPlayed, 0)         AS derbiesPlayed,
+  COALESCE(der.maxDerbyWinMargin, 0)     AS maxDerbyWinMargin,
+  COALESCE(der.maxDerbyLossMargin, 0)    AS maxDerbyLossMargin,
+
+  -- Posiciones en torneos finalizados
+  COALESCE(pos.championships, 0)         AS championships,
+  COALESCE(pos.runnerUps, 0)             AS runnerUps,
+  COALESCE(pos.bottomTwo, 0)             AS bottomTwo,
+  COALESCE(pos.thirdFromBottom, 0)       AS thirdFromBottom,
+
+  -- Acumulados de la tabla historica
+  COALESCE(gen.played, 0)                AS played,
+  COALESCE(gen.draws, 0)                 AS draws,
+  COALESCE(gen.points, 0)                AS points,
+
+  -- Rachas y picos
+  COALESCE(str.bestWin, 0)               AS bestWinStreak,
+  COALESCE(str.worstLoss, 0)             AS worstLossStreak,
+  COALESCE(pk.peakGoalDiff, 0)           AS peakGoalDiff,
+  COALESCE(pk.floorGoalDiff, 0)          AS floorGoalDiff,
+  COALESCE(att.bestAttendanceStreak, 0)  AS bestAttendanceStreak,
+  COALESCE(att.bestAbsenceStreak, 0)     AS bestAbsenceStreak,
+
+  -- Liderazgos fecha a fecha
+  COALESCE(led.leadMatchdaysWithoutTitle, 0) AS leadMatchdaysWithoutTitle,
+  COALESCE(cmb.comebackTitles, 0)        AS comebackTitles,
+
+  -- Mundialito
+  COALESCE(mst.titles, 0)                AS mundialitoTitles,
+  COALESCE(mst.perfectRuns, 0)           AS perfectRuns,
+  COALESCE(mst.semis, 0)                 AS semiRuns,
+  COALESCE(mst.bestSlot, 0)              AS bestSlot,
+  COALESCE(mrun.unbeatenTitles, 0)       AS unbeatenTitles,
+  COALESCE(mrun.shortRuns, 0)            AS shortRuns,
+  COALESCE(mrun.groupZeroRuns, 0)        AS groupZeroRuns,
+  COALESCE(fin.maxFinalWinMargin, 0)     AS maxFinalWinMargin,
+  COALESCE(fin.maxFinalLossMargin, 0)    AS maxFinalLossMargin
+FROM Players p
+
+-- La goleada mas grande a favor y en contra. maxLossMargin va en positivo: es
+-- una magnitud, y asi el umbral del logro se lee igual que el del otro.
+LEFT JOIN (
+  SELECT
+    r.playerId,
+    CAST(GREATEST(MAX(r.goalsDiference), 0)  AS SIGNED) AS maxWinMargin,
+    CAST(GREATEST(-MIN(r.goalsDiference), 0) AS SIGNED) AS maxLossMargin
+  FROM vMatchPlayerResults r
+  GROUP BY r.playerId
+) mar ON mar.playerId = p.playerId
+
+LEFT JOIN (
+  SELECT
+    r.playerId,
+    CAST(COUNT(*)                            AS SIGNED) AS derbiesPlayed,
+    CAST(GREATEST(MAX(r.goalsDiference), 0)  AS SIGNED) AS maxDerbyWinMargin,
+    CAST(GREATEST(-MIN(r.goalsDiference), 0) AS SIGNED) AS maxDerbyLossMargin
+  FROM vMatchPlayerResults r
+  WHERE r.isDerby = TRUE
+  GROUP BY r.playerId
+) der ON der.playerId = p.playerId
+
+-- Ultimo, penultimo y antepenultimo necesitan saber cuantos jugaron el torneo.
+-- El minimo de cinco evita repartir un descenso en un torneo de tres.
+LEFT JOIN (
+  SELECT
+    st.playerId,
+    CAST(SUM(st.`position` = 1) AS SIGNED) AS championships,
+    CAST(SUM(st.`position` = 2) AS SIGNED) AS runnerUps,
+    CAST(SUM(cnt.players >= 5 AND st.`position` >= cnt.players - 1) AS SIGNED) AS bottomTwo,
+    CAST(SUM(cnt.players >= 5 AND st.`position`  = cnt.players - 2) AS SIGNED) AS thirdFromBottom
+  FROM vTournamentStandings st
+  INNER JOIN Tournaments t
+    ON t.tournamentId = st.tournamentId
+   AND t.state        = 'F'
+  INNER JOIN (
+    SELECT tournamentId, CAST(COUNT(*) AS SIGNED) AS players
+    FROM vTournamentStandings
+    GROUP BY tournamentId
+  ) cnt ON cnt.tournamentId = st.tournamentId
+  GROUP BY st.playerId
+) pos ON pos.playerId = p.playerId
+
+-- Puntos BRUTOS, no netos: los netos bajan cuando llega una penalizacion y
+-- Coleccionista dejaria de ser un logro historico.
+--
+-- points es el unico hecho que NO va casteado a SIGNED: la puntuacion del
+-- torneo es DOUBLE y la Clausura paga 0.25 por perder, asi que el cast se
+-- comeria los cuartos de punto.
+LEFT JOIN (
+  SELECT g.playerId, g.played, g.drew AS draws, g.points
+  FROM vGeneralScoreboard g
+) gen ON gen.playerId = p.playerId
+
+LEFT JOIN vPlayerStreaks       str ON str.playerId = p.playerId
+LEFT JOIN vPlayerGoalDiffPeaks pk  ON pk.playerId  = p.playerId
+LEFT JOIN vPlayerAttendanceStreaks att ON att.playerId = p.playerId
+
+-- Pechofrio: de los torneos finalizados que NO gano, en cuantas fechas de uno
+-- solo estuvo primero. Es un maximo por torneo, no una suma entre torneos.
+--
+-- El alias va entre backticks porque LEAD es palabra reservada en MySQL 8: sin
+-- ellos la vista no compila.
+LEFT JOIN (
+  SELECT `lead`.playerId, CAST(MAX(`lead`.matchdaysLed) AS SIGNED) AS leadMatchdaysWithoutTitle
+  FROM (
+    SELECT ms.playerId, ms.tournamentId, COUNT(*) AS matchdaysLed
+    FROM vTournamentMatchdayStandings ms
+    INNER JOIN Tournaments t
+      ON t.tournamentId = ms.tournamentId
+     AND t.state        = 'F'
+    LEFT JOIN vTournamentChampions c
+      ON c.tournamentId = ms.tournamentId
+     AND c.playerId     = ms.playerId
+    WHERE ms.`position` = 1
+      AND c.playerId IS NULL
+    GROUP BY ms.playerId, ms.tournamentId
+  ) `lead`
+  GROUP BY `lead`.playerId
+) led ON led.playerId = p.playerId
+
+-- Puro Huevo: torneos ganados sin haber estado primero en ninguna fecha
+-- anterior a la ultima.
+LEFT JOIN (
+  SELECT c.playerId, CAST(COUNT(*) AS SIGNED) AS comebackTitles
+  FROM vTournamentChampions c
+  WHERE NOT EXISTS (
+    SELECT 1
+    FROM vTournamentMatchdayStandings ms
+    WHERE ms.tournamentId = c.tournamentId
+      AND ms.playerId     = c.playerId
+      AND ms.`position`   = 1
+      AND ms.matchday     < ms.matchdays
+  )
+  GROUP BY c.playerId
+) cmb ON cmb.playerId = p.playerId
+
+LEFT JOIN vMundialitoPlayerStats mst ON mst.playerId = p.playerId
+
+-- Tres hechos que se miran por corrida entera y no por partido.
+LEFT JOIN (
+  SELECT
+    run.playerId,
+    CAST(SUM(run.isUnbeatenTitle) AS SIGNED) AS unbeatenTitles,
+    CAST(SUM(run.isShort)         AS SIGNED) AS shortRuns,
+    CAST(SUM(run.isGroupZero)     AS SIGNED) AS groupZeroRuns
+  FROM (
+    SELECT
+      r.playerId,
+      r.runIndex,
+      -- Campeon sin perder ninguno de los ocho. Se puede dar la vuelta habiendo
+      -- perdido en la fase de grupos, asi que invicto es un escalon mas.
+      (MAX(r.outcome = 'CHAMPION') = 1 AND SUM(r.result = 'L') = 0) AS isUnbeatenTitle,
+      -- Corrida TERMINADA que no llego al quinto partido.
+      (MAX(r.outcome <> 'ALIVE') = 1 AND MAX(r.slot) <= 4)          AS isShort,
+      -- Eliminado en grupos sin sumar un punto. Es lo que reemplaza al
+      -- "perdiste los 3 de grupos" original, que no puede pasar: con dos
+      -- derrotas la corrida se corta en el segundo partido.
+      (MAX(r.outcome = 'OUT') = 1 AND MAX(r.slot) <= 3
+                                  AND MAX(r.groupPoints) = 0)       AS isGroupZero
+    FROM vMundialitoRuns r
+    GROUP BY r.playerId, r.runIndex
+  ) run
+  GROUP BY run.playerId
+) mrun ON mrun.playerId = p.playerId
+
+-- Las finales, con la diferencia de gol que trae vMatchPlayerResults: el CTE
+-- del mundialito no la lleva.
+LEFT JOIN (
+  SELECT
+    r.playerId,
+    CAST(COALESCE(MAX(CASE WHEN r.result = 'W' THEN  m.goalsDiference END), 0) AS SIGNED) AS maxFinalWinMargin,
+    CAST(COALESCE(MAX(CASE WHEN r.result = 'L' THEN -m.goalsDiference END), 0) AS SIGNED) AS maxFinalLossMargin
+  FROM vMundialitoRuns r
+  INNER JOIN vMatchPlayerResults m
+    ON m.playerId = r.playerId
+   AND m.matchId  = r.matchId
+  WHERE r.slot = 8
+  GROUP BY r.playerId
+) fin ON fin.playerId = p.playerId;

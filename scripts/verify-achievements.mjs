@@ -215,6 +215,96 @@ function expectedWorstLoss(playerMatches) {
 }
 
 /**
+ * Posiciones de un jugador en torneos finalizados. Ultimo, penultimo y
+ * antepenultimo solo cuentan en torneos de cinco jugadores o mas: en uno de
+ * tres, el "antepenultimo" es el campeon.
+ */
+function expectedPositions(standingsByTournament) {
+  const facts = new Map();
+  for (const [, table] of standingsByTournament) {
+    const players = table.length;
+    for (const row of table) {
+      const entry = facts.get(row.playerId) ??
+        { championships: 0, runnerUps: 0, bottomTwo: 0, thirdFromBottom: 0 };
+      if (row.position === 1) entry.championships += 1;
+      if (row.position === 2) entry.runnerUps += 1;
+      if (players >= 5 && row.position >= players - 1) entry.bottomTwo += 1;
+      if (players >= 5 && row.position === players - 2) entry.thirdFromBottom += 1;
+      facts.set(row.playerId, entry);
+    }
+  }
+  return facts;
+}
+
+/**
+ * Los dos hechos que salen de mirar quien iba primero fecha por fecha, que son
+ * los unicos del catalogo que dependen de la historia interna de un torneo y no
+ * de como termino.
+ *
+ * leadMatchdaysWithoutTitle (Pechofrio): de los torneos finalizados que el
+ * jugador NO gano, el maximo de fechas en las que estuvo primero. Es un maximo
+ * POR TORNEO y no una suma entre torneos —tres fechas en uno y dos en otro no
+ * son cinco— y las fechas no tienen por que ser consecutivas.
+ *
+ * comebackTitles (Puro Huevo): torneos ganados sin haber estado primero en
+ * ninguna fecha anterior a la ultima.
+ *
+ * Recibe las tablas fecha a fecha ya calculadas en JavaScript por
+ * expectedMatchdayStandings, asi que el campeon sale de la ultima fecha —el que
+ * quedo primero cuando ya no quedaban partidos— y no de preguntarle a la base
+ * quien gano.
+ */
+function expectedLeadFacts(tablesByTournament) {
+  const facts = new Map();
+
+  const entryFor = (playerId) => {
+    if (!facts.has(playerId)) {
+      facts.set(playerId, { leadMatchdaysWithoutTitle: 0, comebackTitles: 0 });
+    }
+    return facts.get(playerId);
+  };
+
+  for (const [, tables] of tablesByTournament) {
+    if (tables.length === 0) continue;
+
+    // Un lider por fecha: la tabla esta numerada 1..N sin empates.
+    const leaders = tables.map((table) => table.find((row) => row.position === 1).playerId);
+    const champion = leaders[leaders.length - 1];
+
+    const ledMatchdays = new Map();
+    for (const playerId of leaders) {
+      ledMatchdays.set(playerId, (ledMatchdays.get(playerId) ?? 0) + 1);
+    }
+
+    for (const [playerId, matchdays] of ledMatchdays) {
+      if (playerId === champion) continue;
+      const entry = entryFor(playerId);
+      entry.leadMatchdaysWithoutTitle = Math.max(entry.leadMatchdaysWithoutTitle, matchdays);
+    }
+
+    if (!leaders.slice(0, -1).includes(champion)) {
+      entryFor(champion).comebackTitles += 1;
+    }
+  }
+
+  return facts;
+}
+
+/**
+ * Completa un mapa de hechos con TODOS los jugadores: el que nunca jugo (o
+ * nunca lidero nada) tiene que aparecer igual, en cero, porque
+ * vPlayerAchievementFacts devuelve una fila por jugador y sin esto
+ * compareByPlayerId contaria de mas cada jugador sin hechos.
+ */
+function withEveryPlayer(playerIds, facts, zero) {
+  const complete = new Map();
+  for (const playerId of playerIds) {
+    complete.set(playerId, facts.get(playerId) ?? { ...zero });
+  }
+  return complete;
+}
+
+/**
  * Compara la tabla COMPLETA (todas las filas, todas las columnas derivadas)
  * contra vTournamentMatchdayStandings, torneo por torneo y fecha por fecha.
  * No alcanza con mirar el lider: la mayoria de las filas de esa vista son
@@ -349,7 +439,7 @@ async function main() {
     // Posiciones fecha a fecha
     // -------------------------------------------------------------------------
     const [tournaments] = await connection.query(
-      'SELECT tournamentId, winningPoints, drawingPoints, lossingPoints FROM Tournaments',
+      'SELECT tournamentId, `state`, winningPoints, drawingPoints, lossingPoints FROM Tournaments',
     );
     const [tourMatches] = await connection.query(
       'SELECT matchId, tournamentId, playedAt FROM Matches ORDER BY playedAt, matchId',
@@ -466,6 +556,95 @@ async function main() {
       process.exitCode = 1;
     } else {
       console.log('picos de diferencia de gol y racha de derrotas OK');
+    }
+
+    // -------------------------------------------------------------------------
+    // Hechos de torneo: posiciones finales
+    // -------------------------------------------------------------------------
+    const [allPlayers] = await connection.query('SELECT playerId FROM Players');
+    const playerIds = allPlayers.map((row) => row.playerId);
+
+    const [finalStandings] = await connection.query(`
+      SELECT st.tournamentId, st.playerId, st.position
+      FROM vTournamentStandings st
+      INNER JOIN Tournaments t ON t.tournamentId = st.tournamentId
+      WHERE t.state = 'F'
+    `);
+
+    const standingsByTournament = new Map();
+    for (const row of finalStandings) {
+      if (!standingsByTournament.has(row.tournamentId)) {
+        standingsByTournament.set(row.tournamentId, []);
+      }
+      standingsByTournament.get(row.tournamentId).push({
+        playerId: row.playerId,
+        position: Number(row.position),
+      });
+    }
+
+    const expectedPositionFacts = withEveryPlayer(
+      playerIds,
+      expectedPositions(standingsByTournament),
+      { championships: 0, runnerUps: 0, bottomTwo: 0, thirdFromBottom: 0 },
+    );
+
+    const [actualFacts] = await connection.query(`
+      SELECT playerId, championships, runnerUps, bottomTwo, thirdFromBottom,
+             leadMatchdaysWithoutTitle, comebackTitles
+      FROM vPlayerAchievementFacts
+    `);
+
+    const positionProblems = compareByPlayerId(
+      expectedPositionFacts,
+      actualFacts,
+      ['championships', 'runnerUps', 'bottomTwo', 'thirdFromBottom'],
+      'posiciones en torneos',
+    );
+
+    if (positionProblems.length > 0) {
+      console.error(`[verify] ${positionProblems.length} DIFERENCIAS en posiciones de torneo:`);
+      for (const problem of positionProblems.slice(0, 40)) console.error(`  - ${problem}`);
+      if (positionProblems.length > 40) {
+        console.error(`  ... y ${positionProblems.length - 40} mas`);
+      }
+      process.exitCode = 1;
+    } else {
+      console.log('posiciones en torneos OK');
+    }
+
+    // -------------------------------------------------------------------------
+    // Hechos de torneo: liderazgos fecha a fecha (Pechofrio y Puro Huevo)
+    // -------------------------------------------------------------------------
+    // Los dos hechos mas retorcidos del catalogo, y los unicos que no se pueden
+    // leer de ninguna tabla final. Se calculan sobre las tablas fecha a fecha
+    // que este mismo script ya armo en JavaScript mas arriba, filtradas a los
+    // torneos finalizados: uno en curso no tiene campeon todavia.
+    const finishedTables = new Map();
+    for (const tournament of tournaments) {
+      if (tournament.state !== 'F') continue;
+      finishedTables.set(tournament.tournamentId, expectedByTournament.get(tournament.tournamentId));
+    }
+
+    const expectedLeads = withEveryPlayer(
+      playerIds,
+      expectedLeadFacts(finishedTables),
+      { leadMatchdaysWithoutTitle: 0, comebackTitles: 0 },
+    );
+
+    const leadProblems = compareByPlayerId(
+      expectedLeads,
+      actualFacts,
+      ['leadMatchdaysWithoutTitle', 'comebackTitles'],
+      'liderazgos fecha a fecha',
+    );
+
+    if (leadProblems.length > 0) {
+      console.error(`[verify] ${leadProblems.length} DIFERENCIAS en liderazgos fecha a fecha:`);
+      for (const problem of leadProblems.slice(0, 40)) console.error(`  - ${problem}`);
+      if (leadProblems.length > 40) console.error(`  ... y ${leadProblems.length - 40} mas`);
+      process.exitCode = 1;
+    } else {
+      console.log('liderazgos fecha a fecha OK');
     }
   } finally {
     await connection.end();
