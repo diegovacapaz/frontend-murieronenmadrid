@@ -509,6 +509,47 @@ function compareFirstLeads(expected, actual) {
   return problems;
 }
 
+/**
+ * Las 28 reglas, escritas una por una contra los hechos. Es deliberadamente
+ * repetitivo: si esto y el SQL coinciden, los dos dicen lo mismo.
+ *
+ * 'U' obtenido, 'L' bloqueado, 'B' roto (la maldicion ya no se puede conseguir).
+ */
+function expectedStates(f) {
+  const reached = (value, target) => (value >= target ? 'U' : 'L');
+  return {
+    CAZADOR:           reached(f.maxWinMargin, 10),
+    LA_CAMA:           reached(f.maxLossMargin, 10),
+    CORONADOS:         reached(f.championships, 1),
+    PRIMER_PERDEDOR:   reached(f.runnerUps, 1),
+    ESTAMOS_EN_LA_B:   reached(f.bottomTwo, 1),
+    LA_PROMOCION:      reached(f.thirdFromBottom, 1),
+    MANO_A_MANO:       reached(f.draws, 10),
+    EL_CORNUDO:        reached(f.bestWinStreak, 10),
+    DEJALO_AMIGO:      reached(f.worstLossStreak, 10),
+    COLECCIONISTA:     reached(f.points, 100),
+    PERRO_VIEJO:       reached(f.played, 50),
+    BUSCATE_UN_LABURO: reached(f.bestAttendanceStreak, 20),
+    SE_BUSCA:          reached(f.bestAbsenceStreak, 10),
+    PICHICHI:          reached(f.peakGoalDiff, 50),
+    PICHI:             f.floorGoalDiff <= -50 ? 'U' : 'L',
+    PECHOFRIO:         reached(f.leadMatchdaysWithoutTitle, 5),
+    PURO_HUEVO:        reached(f.comebackTitles, 1),
+    EX_EQUIPO:         reached(f.maxDerbyLossMargin, 7),
+    HERMOSA_MANIANA:   reached(f.maxDerbyWinMargin, 7),
+    LEYENDA:           reached(f.derbiesPlayed, 8),
+    CAMPEON_DEL_MUNDO: reached(f.mundialitoTitles, 1),
+    JUEGUEN_ENSERIO:   reached(f.unbeatenTitles, 1),
+    INVENTEN_DEPORTE:  reached(f.perfectRuns, 1),
+    // Las dos maldiciones: primero se pregunta si ya se rompio.
+    MEXICANO:          f.bestSlot >= 5 ? 'B' : reached(f.shortRuns, 5),
+    ETERNO_CANDIDATO:  f.mundialitoTitles >= 1 ? 'B' : reached(f.semiRuns, 4),
+    REPECHAJE:         reached(f.groupZeroRuns, 1),
+    EZ:                reached(f.maxFinalWinMargin, 8),
+    DIA_PARA_OLVIDO:   reached(f.maxFinalLossMargin, 8),
+  };
+}
+
 async function main() {
   const rootPassword = process.env.MYSQL_ROOT_PASSWORD;
   const connection = await createConnection({
@@ -518,6 +559,15 @@ async function main() {
     password: rootPassword ?? process.env.MYSQL_PASSWORD ?? '',
     database: process.env.MYSQL_DATABASE ?? 'murieron_en_madrid',
   });
+
+  // Bug de MySQL 8.4 en el motor TempTable (bugs.mysql.com/112704): leer
+  // vPlayerAchievements sin filtro dispara "Table './tmp/#sql...' doesn't
+  // exist" porque sus 28 ramas comparten la materializacion de
+  // vPlayerAchievementFacts (que adentro usa la CTE recursiva de
+  // vMundialitoRuns tres veces) y el motor libera esa tabla compartida antes
+  // de tiempo. Volver al motor MEMORY para esta sesion evita el bug; ver el
+  // comentario de vPlayerAchievements en database/views.sql.
+  await connection.query("SET SESSION internal_tmp_mem_storage_engine = 'MEMORY'");
 
   try {
     const [matches] = await connection.query(`
@@ -826,6 +876,86 @@ async function main() {
       process.exitCode = 1;
     } else {
       console.log(`cableado de ${PASS_THROUGH_COLUMNS.length} columnas OK`);
+    }
+
+    // -------------------------------------------------------------------------
+    // Estados de los 28 logros (vPlayerAchievements)
+    // -------------------------------------------------------------------------
+    // expectedStates() son las 28 reglas escritas una por una contra los
+    // hechos, sin traducir el SQL de la vista a JS. actualFacts ya trae una
+    // fila por jugador (incluido el que nunca jugo, en cero) de la comparacion
+    // de cableado de arriba.
+    //
+    // Ademas de que cada estado coincida, se verifican dos cosas baratas: que
+    // cada jugador tenga exactamente 28 filas (ni una rama de mas ni de menos)
+    // y que todo code que devuelve la vista exista en Achievements (el bug de
+    // truncamiento del UNION que documenta vMundialitoRuns entraria aca: un
+    // code truncado nunca calza con el catalogo).
+    const [catalog] = await connection.query('SELECT code FROM Achievements');
+    const catalogCodes = new Set(catalog.map((row) => row.code));
+
+    const [actualStates] = await connection.query(
+      'SELECT playerId, code, state FROM vPlayerAchievements',
+    );
+
+    const expectedByKey = new Map();
+    for (const facts of actualFacts) {
+      for (const [code, state] of Object.entries(expectedStates(facts))) {
+        expectedByKey.set(`${facts.playerId}:${code}`, state);
+      }
+    }
+
+    const stateProblems = [];
+    const rowCountByPlayer = new Map();
+    const unknownCodes = new Set();
+    const seenKeys = new Set();
+
+    for (const row of actualStates) {
+      rowCountByPlayer.set(row.playerId, (rowCountByPlayer.get(row.playerId) ?? 0) + 1);
+      if (!catalogCodes.has(row.code)) unknownCodes.add(row.code);
+
+      const key = `${row.playerId}:${row.code}`;
+      seenKeys.add(key);
+      const want = expectedByKey.get(key);
+      if (want === undefined) {
+        stateProblems.push(
+          `estados: jugador ${row.playerId} code ${row.code} aparece en la vista y no deberia`,
+        );
+        continue;
+      }
+      if (row.state !== want) {
+        stateProblems.push(
+          `estados: jugador ${row.playerId} ${row.code}: base ${row.state}, esperado ${want}`,
+        );
+      }
+    }
+
+    for (const key of expectedByKey.keys()) {
+      if (!seenKeys.has(key)) {
+        stateProblems.push(`estados: falta ${key}, la vista no la devuelve`);
+      }
+    }
+
+    for (const playerId of playerIds) {
+      const count = rowCountByPlayer.get(playerId) ?? 0;
+      if (count !== 28) {
+        stateProblems.push(`estados: jugador ${playerId} tiene ${count} filas, esperadas 28`);
+      }
+    }
+
+    if (unknownCodes.size > 0) {
+      stateProblems.push(
+        `estados: codes que no existen en Achievements, posible truncamiento del UNION: ${[...unknownCodes].join(', ')}`,
+      );
+    }
+
+    if (stateProblems.length > 0) {
+      console.error(`[verify] ${stateProblems.length} DIFERENCIAS en estados de logros:`);
+      for (const problem of stateProblems.slice(0, 40)) console.error(`  - ${problem}`);
+      if (stateProblems.length > 40) console.error(`  ... y ${stateProblems.length - 40} mas`);
+      process.exitCode = 1;
+    } else {
+      console.log('estados de logros OK (28 por jugador, ningun code truncado)');
     }
   } finally {
     await connection.end();
