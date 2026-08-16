@@ -73,6 +73,52 @@ function expectedAttendance(matches, lineups) {
   return result;
 }
 
+/**
+ * Compara un mapa `playerId -> valores esperados` contra las filas que trae
+ * una vista, en las dos direcciones: valores que no coinciden, jugadores que
+ * la vista devuelve de mas (no estan en `expected`) y jugadores esperados que
+ * la vista no devuelve. Un solo sentido no alcanza: si la vista alguna vez
+ * dejara de filtrar algo y sumara o perdiera jugadores, comparar solo desde
+ * `actual` no lo detectaria.
+ *
+ * Pensado para reusarse en las comprobaciones que se vayan agregando a este
+ * mismo archivo (proximos logros, todos por jugador).
+ */
+function compareByPlayerId(expected, actual, fields, label) {
+  const problems = [];
+
+  if (actual.length !== expected.size) {
+    problems.push(
+      `${label}: cantidad de filas esperadas ${expected.size}, obtenidas ${actual.length}`,
+    );
+  }
+
+  const seen = new Set();
+  for (const row of actual) {
+    seen.add(row.playerId);
+    const want = expected.get(row.playerId);
+    if (!want) {
+      problems.push(`${label}: jugador ${row.playerId} aparece en la vista y no deberia`);
+      continue;
+    }
+    for (const key of fields) {
+      if (Number(row[key]) !== want[key]) {
+        problems.push(
+          `${label}: jugador ${row.playerId} ${key}: base ${row[key]}, esperado ${want[key]}`,
+        );
+      }
+    }
+  }
+
+  for (const playerId of expected.keys()) {
+    if (!seen.has(playerId)) {
+      problems.push(`${label}: falta el jugador ${playerId}, la vista no lo devuelve`);
+    }
+  }
+
+  return problems;
+}
+
 async function main() {
   const rootPassword = process.env.MYSQL_ROOT_PASSWORD;
   const connection = await createConnection({
@@ -101,19 +147,21 @@ async function main() {
     const expected = expectedAttendance(matches, lineups);
 
     const [actual] = await connection.query('SELECT * FROM vPlayerAttendanceStreaks');
-    let failures = 0;
-    for (const row of actual) {
-      const want = expected.get(row.playerId);
-      if (!want) continue;
-      for (const key of ['bestAttendanceStreak', 'bestAbsenceStreak']) {
-        if (Number(row[key]) !== want[key]) {
-          console.error(`jugador ${row.playerId} ${key}: base ${row[key]}, esperado ${want[key]}`);
-          failures += 1;
-        }
-      }
+    const problems = compareByPlayerId(
+      expected,
+      actual,
+      ['bestAttendanceStreak', 'bestAbsenceStreak'],
+      'asistencia',
+    );
+
+    if (problems.length > 0) {
+      console.error(`[verify] ${problems.length} DIFERENCIAS:`);
+      for (const problem of problems.slice(0, 40)) console.error(`  - ${problem}`);
+      if (problems.length > 40) console.error(`  ... y ${problems.length - 40} mas`);
+      process.exitCode = 1;
+    } else {
+      console.log('asistencia OK');
     }
-    console.log(failures === 0 ? 'asistencia OK' : `asistencia: ${failures} diferencias`);
-    process.exitCode = failures === 0 ? 0 : 1;
   } finally {
     await connection.end();
   }
