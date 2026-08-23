@@ -247,7 +247,9 @@ function expectedPositions(standingsByTournament) {
  * son cinco— y las fechas no tienen por que ser consecutivas.
  *
  * comebackTitles (Puro Huevo): torneos ganados sin haber estado primero en
- * ninguna fecha anterior a la ultima.
+ * ninguna de las TRES fechas previas a la ultima. Lo de antes no cuenta: se
+ * puede haber liderado media temporada, perdido la punta y recuperarla justo
+ * en la fecha final.
  *
  * Recibe las tablas fecha a fecha ya calculadas en JavaScript por
  * expectedMatchdayStandings, asi que el campeon sale de la ultima fecha —el que
@@ -282,7 +284,11 @@ function expectedLeadFacts(tablesByTournament) {
       entry.leadMatchdaysWithoutTitle = Math.max(entry.leadMatchdaysWithoutTitle, matchdays);
     }
 
-    if (!leaders.slice(0, -1).includes(champion)) {
+    // La ventana son las tres fechas previas a la ultima: como leaders[i] es la
+    // fecha i+1, salen de los tres anteultimos elementos del array. En un
+    // torneo corto slice devuelve los que haya, y en uno de una sola fecha no
+    // hay ventana ninguna: ahi no se remonto nada y el titulo no cuenta.
+    if (leaders.length >= 2 && !leaders.slice(-4, -1).includes(champion)) {
       entryFor(champion).comebackTitles += 1;
     }
   }
@@ -291,35 +297,37 @@ function expectedLeadFacts(tablesByTournament) {
 }
 
 /**
- * La primera fecha en la que cada jugador estuvo primero en cada torneo, y
- * cuantas fechas tuvo ese torneo.
+ * La ultima fecha ANTERIOR A LA FINAL en la que cada jugador estuvo primero en
+ * cada torneo, y cuantas fechas tuvo ese torneo. Null cuando nunca lidero antes
+ * de la ultima, que es el caso del campeon que da la vuelta sobre la chicharra.
  *
- * Son los dos operandos de la igualdad de la que sale comebackTitles: un titulo
- * es remontada cuando la primera vez que el campeon aparece primero es,
- * justamente, la ultima fecha. Se verifican por separado porque el hecho final
- * da cero para todos —en el historial no hay ni una remontada— y una
- * comparacion de ceros contra ceros no prueba nada. Los pedazos, en cambio,
- * tienen valores variados y bien distintos entre si.
+ * Son los dos operandos de la comparacion de la que sale comebackTitles: un
+ * titulo es remontada cuando ese numero queda por debajo de la ventana de tres
+ * fechas. Se verifican por separado porque el hecho final es un booleano por
+ * torneo y no distingue entre "no lidero nunca" y "lidero al principio": estos
+ * dos numeros si, y valen de todo.
  *
  * Devuelve un mapa con clave "torneo:jugador" para poder comparar fila por fila
  * y que el mensaje de error muestre los dos numeros.
  */
-function expectedFirstLeads(tablesByTournament) {
-  const firstLeads = new Map();
+function expectedLastLeads(tablesByTournament) {
+  const lastLeads = new Map();
   for (const [tournamentId, tables] of tablesByTournament) {
     for (let i = 0; i < tables.length; i++) {
       const leader = tables[i].find((row) => row.position === 1).playerId;
       const key = `${tournamentId}:${leader}`;
-      if (firstLeads.has(key)) continue;   // solo la PRIMERA vez que lidero
-      firstLeads.set(key, {
+      const entry = lastLeads.get(key) ?? {
         tournamentId,
         playerId: leader,
-        firstLeadMatchday: i + 1,
+        lastLeadBeforeFinal: null,
         matchdays: tables.length,
-      });
+      };
+      // La ultima fecha no cuenta: el campeon siempre la lidera.
+      if (i + 1 < tables.length) entry.lastLeadBeforeFinal = i + 1;
+      lastLeads.set(key, entry);
     }
   }
-  return firstLeads;
+  return lastLeads;
 }
 
 /**
@@ -468,10 +476,15 @@ function compareMatchdayStandings(expectedByTournament, actualRows) {
 /**
  * Compara los dos operandos de comebackTitles por (torneo, jugador), en las dos
  * direcciones. Otra clave compuesta, asi que tampoco entra en compareByPlayerId.
+ *
+ * lastLeadBeforeFinal es el unico numero nullable de todo el verificador: null
+ * significa "nunca lidero antes de la ultima fecha", y hay que compararlo como
+ * null y no como cero, porque cero seria una fecha que no existe.
  */
-function compareFirstLeads(expected, actual) {
+function compareLastLeads(expected, actual) {
   const problems = [];
   const seen = new Set();
+  const show = (value) => (value === null ? 'null' : value);
 
   for (const row of actual) {
     const key = `${row.tournamentId}:${row.playerId}`;
@@ -480,19 +493,21 @@ function compareFirstLeads(expected, actual) {
 
     if (!want) {
       problems.push(
-        `primer liderazgo: torneo ${row.tournamentId} jugador ${row.playerId} figura como lider y no lidero nunca`,
+        `ultimo liderazgo: torneo ${row.tournamentId} jugador ${row.playerId} figura como lider y no lidero nunca`,
       );
       continue;
     }
-    if (Number(row.firstLeadMatchday) !== want.firstLeadMatchday) {
+
+    const actualLast = row.lastLeadBeforeFinal === null ? null : Number(row.lastLeadBeforeFinal);
+    if (actualLast !== want.lastLeadBeforeFinal) {
       problems.push(
-        `primer liderazgo: torneo ${row.tournamentId} jugador ${row.playerId} ` +
-        `firstLeadMatchday base ${row.firstLeadMatchday}, esperado ${want.firstLeadMatchday}`,
+        `ultimo liderazgo: torneo ${row.tournamentId} jugador ${row.playerId} ` +
+        `lastLeadBeforeFinal base ${show(actualLast)}, esperado ${show(want.lastLeadBeforeFinal)}`,
       );
     }
     if (Number(row.matchdays) !== want.matchdays) {
       problems.push(
-        `primer liderazgo: torneo ${row.tournamentId} jugador ${row.playerId} ` +
+        `ultimo liderazgo: torneo ${row.tournamentId} jugador ${row.playerId} ` +
         `matchdays base ${row.matchdays}, esperado ${want.matchdays}`,
       );
     }
@@ -501,7 +516,7 @@ function compareFirstLeads(expected, actual) {
   for (const [key, want] of expected) {
     if (!seen.has(key)) {
       problems.push(
-        `primer liderazgo: falta ${key}, lidero desde la fecha ${want.firstLeadMatchday} y la base no lo trae`,
+        `ultimo liderazgo: falta ${key}, lidero hasta la fecha ${show(want.lastLeadBeforeFinal)} y la base no lo trae`,
       );
     }
   }
@@ -809,28 +824,29 @@ async function main() {
     );
 
     // Y los dos operandos de los que sale comebackTitles, por separado. El hecho
-    // final da cero para todos —no hay ninguna remontada en el historial— asi
-    // que compararlo solo a el seria comparar ceros contra ceros. Estos dos
-    // numeros, en cambio, valen de todo: primeras fechas 1, 3, 4, 7, 8, 9, 11,
-    // 14 y 22 sobre torneos de 1, 5, 15, 23 y 24 fechas.
+    // final es un booleano por torneo: no distingue entre el campeon que no
+    // lidero nunca y el que lidero al principio y se cayo, que son los dos
+    // remontada. Estos dos numeros si, y valen de todo: ultimos liderazgos
+    // null, 2, 4, 22 y 23 sobre torneos de 1, 5, 15, 23 y 24 fechas.
     //
     // Aca entran TODOS los torneos, no solo los finalizados: la subquery de la
     // vista tampoco los filtra —el filtro se lo pone el join contra
     // vTournamentChampions— y de paso suma el torneo en curso.
-    const [actualFirstLeads] = await connection.query(`
+    const [actualLastLeads] = await connection.query(`
       SELECT ms.tournamentId, ms.playerId,
-             MIN(ms.matchday) AS firstLeadMatchday, MAX(ms.matchdays) AS matchdays
+             MAX(CASE WHEN ms.matchday < ms.matchdays THEN ms.matchday END) AS lastLeadBeforeFinal,
+             MAX(ms.matchdays) AS matchdays
       FROM vTournamentMatchdayStandings ms
       WHERE ms.\`position\` = 1
       GROUP BY ms.tournamentId, ms.playerId
     `);
 
-    const firstLeadProblems = compareFirstLeads(
-      expectedFirstLeads(expectedByTournament),
-      actualFirstLeads,
+    const lastLeadProblems = compareLastLeads(
+      expectedLastLeads(expectedByTournament),
+      actualLastLeads,
     );
 
-    const leadProblems = [...leadFactProblems, ...firstLeadProblems];
+    const leadProblems = [...leadFactProblems, ...lastLeadProblems];
 
     if (leadProblems.length > 0) {
       console.error(`[verify] ${leadProblems.length} DIFERENCIAS en liderazgos fecha a fecha:`);

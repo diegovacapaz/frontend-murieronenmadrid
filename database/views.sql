@@ -1330,27 +1330,38 @@ LEFT JOIN (
   GROUP BY `lead`.playerId
 ) led ON led.playerId = p.playerId
 
--- Puro Huevo: torneos ganados sin haber estado primero en ninguna fecha
--- anterior a la ultima.
+-- Puro Huevo: torneos ganados llegando de atras. No alcanza con salir campeon:
+-- en las TRES fechas previas a la ultima el campeon no tiene que haber estado
+-- primero ni una vez, y recien en la ultima pasa al frente para dar la vuelta.
+-- Lo que pase antes de esa ventana no importa: se puede haber liderado media
+-- temporada, perdido la punta y recuperado sobre el final.
 --
--- La pregunta se responde con un solo numero: cual fue la PRIMERA fecha en la
--- que el campeon aparecio primero. Si esa fecha es la ultima, no lidero antes y
--- el titulo es una remontada. Sacar ese numero afuera —en vez de esconder la
--- regla en un NOT EXISTS correlacionado— deja el hecho reducido a una igualdad
--- entre dos enteros que el verificador puede comparar por separado, que es lo
--- unico que se puede hacer con un hecho que hoy da cero para todos.
+-- La pregunta se responde con un solo numero: cual fue la ULTIMA fecha, sin
+-- contar la final, en la que el campeon aparecio primero. Si no lidero nunca
+-- antes ese numero es NULL, y si lidero, tiene que quedar por debajo de la
+-- ventana. Sacar ese numero afuera —en vez de esconder la regla en un NOT
+-- EXISTS correlacionado— deja el hecho reducido a una comparacion entre dos
+-- enteros que el verificador puede comparar por separado.
+--
+-- El minimo de dos fechas descarta el torneo de una sola: ahi no hay ninguna
+-- fecha anterior a la ultima, la ventana queda vacia y el campeon se llevaria
+-- una remontada que nunca remonto nada.
 --
 -- El INNER JOIN alcanza: el campeon lidera al menos la ultima fecha, siempre,
 -- porque la ultima fecha de la tabla acumulada ES la tabla final del torneo.
 LEFT JOIN (
-  SELECT c.playerId, CAST(SUM(fl.firstLeadMatchday = fl.matchdays) AS SIGNED) AS comebackTitles
+  SELECT
+    c.playerId,
+    CAST(SUM(fl.matchdays >= 2
+             AND (fl.lastLeadBeforeFinal IS NULL
+                  OR fl.lastLeadBeforeFinal < fl.matchdays - 3)) AS SIGNED) AS comebackTitles
   FROM vTournamentChampions c
   INNER JOIN (
     SELECT
       ms.tournamentId,
       ms.playerId,
-      MIN(ms.matchday)  AS firstLeadMatchday,
-      MAX(ms.matchdays) AS matchdays
+      MAX(CASE WHEN ms.matchday < ms.matchdays THEN ms.matchday END) AS lastLeadBeforeFinal,
+      MAX(ms.matchdays)                                             AS matchdays
     FROM vTournamentMatchdayStandings ms
     WHERE ms.`position` = 1
     GROUP BY ms.tournamentId, ms.playerId

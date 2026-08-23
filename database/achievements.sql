@@ -31,7 +31,7 @@ INSERT INTO Achievements (code, category, title, description, isBreakable, sortO
   ('PICHICHI',           'G', 'Pichichi',                      'Alcanza una diferencia de gol de +50',                     FALSE, 230),
   ('PICHI',              'G', 'Pichi',                         'Alcanza una diferencia de gol de -50',                     FALSE, 240),
   ('PECHOFRIO',          'G', 'Pechofrio',                     'Lidera 5 fechas un torneo sin ganarlo',                    FALSE, 250),
-  ('PURO_HUEVO',         'G', 'Puro Huevo',                    'Gana un torneo que no lideraste hasta la ultima fecha',    FALSE, 260),
+  ('PURO_HUEVO',         'G', 'Puro Huevo',                    'Sal campeon sin haber liderado las 3 fechas previas',      FALSE, 260),
   ('EX_EQUIPO',          'S', 'Ex-Equipo',                     'Pierde un superclasico por 7 o mas goles',                 FALSE, 300),
   ('HERMOSA_MANIANA',    'S', 'Hermosa maniana verdad?',       'Gana un superclasico por 7 o mas goles',                   FALSE, 310),
   ('LEYENDA',            'S', 'Leyenda',                       'Juega 8 o mas superclasicos',                              FALSE, 320),
