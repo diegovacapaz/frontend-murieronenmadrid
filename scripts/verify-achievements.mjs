@@ -368,8 +368,9 @@ const PASS_THROUGH_COLUMNS = [
  * toca. Un `<= 4` que deberia ser `<= 5` pasaba en verde.
  *
  * unbeatenTitles (Jueguen enserio che): campeon sin perder ninguno de los ocho.
- * shortRuns (Mexicano): corrida terminada que no PASO del quinto partido, o
- *   sea que nunca llego a jugar el sexto. Perder los cuartos cuenta.
+ * shortRuns (Mexicano): corrida terminada que nunca llego a CUARTOS, que es el
+ *   sexto partido (3 de grupos, 16avos, 8avos, cuartos). Perder los 8avos
+ *   cuenta: la corrida murio en el quinto.
  * groupZeroRuns (Entraste por Repechaje?): eliminado en grupos con cero puntos.
  */
 function expectedRunFacts(runRows) {

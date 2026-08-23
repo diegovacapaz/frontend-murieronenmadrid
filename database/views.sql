@@ -1402,9 +1402,10 @@ LEFT JOIN (
       -- Campeon sin perder ninguno de los ocho. Se puede dar la vuelta habiendo
       -- perdido en la fase de grupos, asi que invicto es un escalon mas.
       (MAX(r.outcome = 'CHAMPION') = 1 AND SUM(r.result = 'L') = 0) AS isUnbeatenTitle,
-      -- Corrida TERMINADA que no PASO del quinto partido. Pasar el quinto
-      -- —los cuartos— es jugar el sexto: por eso el tope es 5 y no 6. Llegar a
-      -- cuartos y perderlos sigue siendo una corrida corta.
+      -- Corrida TERMINADA que nunca llego a CUARTOS. Los puestos son 1 a 3
+      -- grupos, 4 16avos, 5 8avos, 6 cuartos, 7 semis y 8 la final: llegar a
+      -- cuartos es jugar el sexto partido, asi que la corrida corta es la que
+      -- muere en el quinto o antes. Perder los 8avos sigue contando.
       (MAX(r.outcome <> 'ALIVE') = 1 AND MAX(r.slot) <= 5)          AS isShort,
       -- Eliminado en grupos sin sumar un punto. Es lo que reemplaza al
       -- "perdiste los 3 de grupos" original, que no puede pasar: con dos

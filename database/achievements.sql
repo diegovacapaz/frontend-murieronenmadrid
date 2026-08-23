@@ -46,7 +46,7 @@ INSERT INTO Achievements (code, category, title, description, isBreakable, sortO
   ('CAMPEON_DEL_MUNDO', 'M', 'Campeón del Mundo',             'Gana un mundialito',                                    FALSE,  400),
   ('JUEGUEN_ENSERIO',   'M', 'Jueguen enserio che',           'Gana un mundialito invicto',                            FALSE,  410),
   ('INVENTEN_DEPORTE',  'M', 'Inventen otro Deporte',         'Gana todos los partidos de un mundialito',              FALSE,  420),
-  ('MEXICANO',          'M', 'Mexicano',                      'Termina 5 mundialitos sin pasar nunca del 5to partido', TRUE,   430),
+  ('MEXICANO',          'M', 'Mexicano',                      'Termina 5 mundialitos sin llegar nunca a cuartos',      TRUE,   430),
   ('ETERNO_CANDIDATO',  'M', 'Eterno Candidato',              'Llega a semis en 4 mundialitos sin ganar ninguno',      TRUE,   440),
   ('REPECHAJE',         'M', '¿Entraste por Repechaje?',      'Queda eliminado en fase de grupos con cero puntos',     FALSE,  450),
   ('EZ',                'M', 'EZ',                            'Gana una final por 8 o más goles',                      FALSE,  460),
