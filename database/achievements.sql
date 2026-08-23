@@ -12,6 +12,14 @@
 -- intercalar un logro nuevo sin renumerar los demas.
 -- =============================================================================
 
+-- Los titulos y las descripciones llevan tildes, enies y signos de apertura, y
+-- este archivo esta guardado en UTF-8. El cliente `mysql` de la imagen oficial
+-- abre la conexion en latin1, asi que sin esta linea los bytes entran mal y en
+-- la base queda "UtopÃ­as". No alcanza con que la columna sea utf8mb4: lo que
+-- falla es como se interpreta lo que llega. Pasa por el cliente y no por el
+-- driver de Node, que ya se conecta en utf8mb4.
+SET NAMES utf8mb4;
+
 DELETE FROM Achievements;
 
 INSERT INTO Achievements (code, category, title, description, isBreakable, sortOrder) VALUES
