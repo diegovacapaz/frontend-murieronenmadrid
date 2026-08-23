@@ -359,6 +359,65 @@ const PASS_THROUGH_COLUMNS = [
 ];
 
 /**
+ * Los tres hechos que salen de mirar una CORRIDA entera del mundialito y no un
+ * partido suelto. Se calculan sobre las filas de vMundialitoRuns, que ya tiene
+ * su propio verificador —scripts/verify-mundialito.mjs las contrasta partido
+ * por partido contra una implementacion independiente— asi que lo que se
+ * comprueba aca es la AGREGACION, que es lo que nadie miraba: los tres se
+ * arman adentro de vPlayerAchievementFacts y ninguna otra comprobacion los
+ * toca. Un `<= 4` que deberia ser `<= 5` pasaba en verde.
+ *
+ * unbeatenTitles (Jueguen enserio che): campeon sin perder ninguno de los ocho.
+ * shortRuns (Mexicano): corrida terminada que no PASO del quinto partido, o
+ *   sea que nunca llego a jugar el sexto. Perder los cuartos cuenta.
+ * groupZeroRuns (Entraste por Repechaje?): eliminado en grupos con cero puntos.
+ */
+function expectedRunFacts(runRows) {
+  const runs = new Map();
+  for (const row of runRows) {
+    const key = `${row.playerId}:${row.runIndex}`;
+    const run = runs.get(key) ?? {
+      playerId: row.playerId,
+      slots: [],
+      results: [],
+      outcomes: [],
+      groupPoints: [],
+    };
+    run.slots.push(Number(row.slot));
+    run.results.push(row.result);
+    run.outcomes.push(row.outcome);
+    run.groupPoints.push(Number(row.groupPoints));
+    runs.set(key, run);
+  }
+
+  const facts = new Map();
+  const entryFor = (playerId) => {
+    if (!facts.has(playerId)) {
+      facts.set(playerId, { unbeatenTitles: 0, shortRuns: 0, groupZeroRuns: 0 });
+    }
+    return facts.get(playerId);
+  };
+
+  for (const run of runs.values()) {
+    const entry = entryFor(run.playerId);
+    const topSlot  = Math.max(...run.slots);
+    const finished = run.outcomes.some((o) => o !== 'ALIVE');
+
+    if (run.outcomes.includes('CHAMPION') && !run.results.includes('L')) {
+      entry.unbeatenTitles += 1;
+    }
+    if (finished && topSlot <= 5) {
+      entry.shortRuns += 1;
+    }
+    if (run.outcomes.includes('OUT') && topSlot <= 3 && Math.max(...run.groupPoints) === 0) {
+      entry.groupZeroRuns += 1;
+    }
+  }
+
+  return facts;
+}
+
+/**
  * Completa un mapa de hechos con TODOS los jugadores: el que nunca jugo (o
  * nunca lidero nada) tiene que aparecer igual, en cero, porque
  * vPlayerAchievementFacts devuelve una fila por jugador y sin esto
@@ -566,7 +625,7 @@ function expectedStates(f) {
     JUEGUEN_ENSERIO:   withProgress(reached(f.unbeatenTitles, 1), null, null),
     INVENTEN_DEPORTE:  withProgress(reached(f.perfectRuns, 1), null, null),
     // Las dos maldiciones: primero se pregunta si ya se rompio.
-    MEXICANO:          withProgress(f.bestSlot >= 5 ? 'B' : reached(f.shortRuns, 5), f.shortRuns, 5),
+    MEXICANO:          withProgress(f.bestSlot >= 6 ? 'B' : reached(f.shortRuns, 5), f.shortRuns, 5),
     ETERNO_CANDIDATO:  withProgress(f.mundialitoTitles >= 1 ? 'B' : reached(f.semiRuns, 4), f.semiRuns, 4),
     REPECHAJE:         withProgress(reached(f.groupZeroRuns, 1), null, null),
     EZ:                withProgress(reached(f.maxFinalWinMargin, 8), f.maxFinalWinMargin, 8),
@@ -797,6 +856,40 @@ async function main() {
       process.exitCode = 1;
     } else {
       console.log('posiciones en torneos OK');
+    }
+
+    // -------------------------------------------------------------------------
+    // Hechos de corrida del mundialito
+    // -------------------------------------------------------------------------
+    // vMundialitoRuns ya tiene su propio verificador, que la contrasta partido
+    // por partido; lo que se comprueba aca es como vPlayerAchievementFacts la
+    // agrega en tres numeros. Es la unica comprobacion que los mira: sin ella,
+    // mover el tope de una corrida corta no rompia nada.
+    const [runRows] = await connection.query(`
+      SELECT playerId, runIndex, slot, result, outcome, groupPoints
+      FROM vMundialitoRuns
+    `);
+
+    const expectedRuns = withEveryPlayer(
+      playerIds,
+      expectedRunFacts(runRows),
+      { unbeatenTitles: 0, shortRuns: 0, groupZeroRuns: 0 },
+    );
+
+    const runProblems = compareByPlayerId(
+      expectedRuns,
+      actualFacts,
+      ['unbeatenTitles', 'shortRuns', 'groupZeroRuns'],
+      'corridas de mundialito',
+    );
+
+    if (runProblems.length > 0) {
+      console.error(`[verify] ${runProblems.length} DIFERENCIAS en corridas de mundialito:`);
+      for (const problem of runProblems.slice(0, 40)) console.error(`  - ${problem}`);
+      if (runProblems.length > 40) console.error(`  ... y ${runProblems.length - 40} mas`);
+      process.exitCode = 1;
+    } else {
+      console.log('corridas de mundialito OK');
     }
 
     // -------------------------------------------------------------------------
