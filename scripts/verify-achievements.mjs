@@ -241,10 +241,10 @@ function expectedPositions(standingsByTournament) {
  * los unicos del catalogo que dependen de la historia interna de un torneo y no
  * de como termino.
  *
- * leadMatchdaysWithoutTitle (Pechofrio): de los torneos finalizados que el
- * jugador NO gano, el maximo de fechas en las que estuvo primero. Es un maximo
- * POR TORNEO y no una suma entre torneos —tres fechas en uno y dos en otro no
- * son cinco— y las fechas no tienen por que ser consecutivas.
+ * chokedRuns (Pechofrio): torneos finalizados que el jugador NO gano habiendo
+ * estado primero en las TRES fechas previas a la ultima. Es el espejo de Puro
+ * Huevo: misma ventana, cuantificador opuesto. Un mismo torneo puede repartir
+ * los dos logros a dos jugadores distintos.
  *
  * comebackTitles (Puro Huevo): torneos ganados sin haber estado primero en
  * ninguna de las TRES fechas previas a la ultima. Lo de antes no cuenta: se
@@ -261,7 +261,7 @@ function expectedLeadFacts(tablesByTournament) {
 
   const entryFor = (playerId) => {
     if (!facts.has(playerId)) {
-      facts.set(playerId, { leadMatchdaysWithoutTitle: 0, comebackTitles: 0 });
+      facts.set(playerId, { chokedRuns: 0, comebackTitles: 0 });
     }
     return facts.get(playerId);
   };
@@ -273,23 +273,25 @@ function expectedLeadFacts(tablesByTournament) {
     const leaders = tables.map((table) => table.find((row) => row.position === 1).playerId);
     const champion = leaders[leaders.length - 1];
 
-    const ledMatchdays = new Map();
-    for (const playerId of leaders) {
-      ledMatchdays.set(playerId, (ledMatchdays.get(playerId) ?? 0) + 1);
-    }
-
-    for (const [playerId, matchdays] of ledMatchdays) {
-      if (playerId === champion) continue;
-      const entry = entryFor(playerId);
-      entry.leadMatchdaysWithoutTitle = Math.max(entry.leadMatchdaysWithoutTitle, matchdays);
-    }
-
     // La ventana son las tres fechas previas a la ultima: como leaders[i] es la
     // fecha i+1, salen de los tres anteultimos elementos del array. En un
-    // torneo corto slice devuelve los que haya, y en uno de una sola fecha no
-    // hay ventana ninguna: ahi no se remonto nada y el titulo no cuenta.
-    if (leaders.length >= 2 && !leaders.slice(-4, -1).includes(champion)) {
+    // torneo corto slice devuelve los que haya, y en uno de una sola fecha
+    // queda vacia: ahi no hay ventana ni para liderar ni para remontar.
+    const window = leaders.slice(-4, -1);
+    if (window.length === 0) continue;
+
+    // Puro Huevo: el campeon no lidero ninguna de las tres.
+    if (!window.includes(champion)) {
       entryFor(champion).comebackTitles += 1;
+    }
+
+    // Pechofrio: alguien que NO es el campeon las lidero todas. Como hay un
+    // solo lider por fecha, que las tres sean del mismo jugador equivale a que
+    // el conjunto de lideres tenga un elemento, y que ese no sea el campeon.
+    const windowLeaders = new Set(window);
+    if (windowLeaders.size === 1) {
+      const [only] = windowLeaders;
+      if (only !== champion) entryFor(only).chokedRuns += 1;
     }
   }
 
@@ -555,7 +557,7 @@ function expectedStates(f) {
     SE_BUSCA:          withProgress(reached(f.bestAbsenceStreak, 10), f.bestAbsenceStreak, 10),
     PICHICHI:          withProgress(reached(f.peakGoalDiff, 50), f.peakGoalDiff, 50),
     PICHI:             withProgress(f.floorGoalDiff <= -50 ? 'U' : 'L', -f.floorGoalDiff, 50),
-    PECHOFRIO:         withProgress(reached(f.leadMatchdaysWithoutTitle, 5), f.leadMatchdaysWithoutTitle, 5),
+    PECHOFRIO:         withProgress(reached(f.chokedRuns, 1), null, null),
     PURO_HUEVO:        withProgress(reached(f.comebackTitles, 1), null, null),
     EX_EQUIPO:         withProgress(reached(f.maxDerbyLossMargin, 7), f.maxDerbyLossMargin, 7),
     HERMOSA_MANIANA:   withProgress(reached(f.maxDerbyWinMargin, 7), f.maxDerbyWinMargin, 7),
@@ -813,13 +815,13 @@ async function main() {
     const expectedLeads = withEveryPlayer(
       playerIds,
       expectedLeadFacts(finishedTables),
-      { leadMatchdaysWithoutTitle: 0, comebackTitles: 0 },
+      { chokedRuns: 0, comebackTitles: 0 },
     );
 
     const leadFactProblems = compareByPlayerId(
       expectedLeads,
       actualFacts,
-      ['leadMatchdaysWithoutTitle', 'comebackTitles'],
+      ['chokedRuns', 'comebackTitles'],
       'liderazgos fecha a fecha',
     );
 

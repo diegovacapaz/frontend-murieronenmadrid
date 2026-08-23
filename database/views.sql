@@ -1037,8 +1037,9 @@ GROUP BY i.playerId;
 -- POSICIONES FECHA A FECHA
 -- =============================================================================
 -- La tabla de un torneo despues de cada fecha, no solo al final. La necesitan
--- dos logros: Pechofrio (liderar 5 fechas y no ganarlo) y Puro Huevo (ganarlo
--- sin haber liderado hasta la ultima).
+-- los dos logros que miran el tramo final de un torneo, que son uno el espejo
+-- del otro: Pechofrio (liderar las tres fechas previas a la ultima y perderlo)
+-- y Puro Huevo (no liderar ninguna de esas tres y darla vuelta en la ultima).
 --
 -- Una fecha es cada partido del torneo: en este grupo se juega un partido por
 -- dia y van todos los que van.
@@ -1237,7 +1238,7 @@ SELECT
   COALESCE(att.bestAbsenceStreak, 0)     AS bestAbsenceStreak,
 
   -- Liderazgos fecha a fecha
-  COALESCE(led.leadMatchdaysWithoutTitle, 0) AS leadMatchdaysWithoutTitle,
+  COALESCE(chk.chokedRuns, 0)            AS chokedRuns,
   COALESCE(cmb.comebackTitles, 0)        AS comebackTitles,
 
   -- Mundialito
@@ -1307,28 +1308,42 @@ LEFT JOIN vPlayerStreaks       str ON str.playerId = p.playerId
 LEFT JOIN vPlayerGoalDiffPeaks pk  ON pk.playerId  = p.playerId
 LEFT JOIN vPlayerAttendanceStreaks att ON att.playerId = p.playerId
 
--- Pechofrio: de los torneos finalizados que NO gano, en cuantas fechas de uno
--- solo estuvo primero. Es un maximo por torneo, no una suma entre torneos.
+-- Pechofrio: la antitesis exacta de Puro Huevo. Misma ventana —las tres fechas
+-- previas a la ultima— y el mismo torneo puede repartir los dos logros, uno a
+-- cada jugador: el que lidero toda la ventana y la perdio, y el que no lidero
+-- ninguna y dio la vuelta. Lo unico que cambia es el cuantificador: alla
+-- ninguna, aca todas.
 --
--- El alias va entre backticks porque LEAD es palabra reservada en MySQL 8: sin
--- ellos la vista no compila.
+-- La ventana se arma con las dos condiciones de matchday y el tamanio sale del
+-- COUNT: la grilla de vTournamentMatchdayStandings trae a TODOS los jugadores
+-- del torneo en TODAS las fechas, asi que contar las filas del jugador dentro
+-- de la ventana da cuantas fechas tiene la ventana. En un torneo de una sola
+-- fecha no entra ninguna fila y el grupo directamente no existe: ahi no hay
+-- ventana que liderar.
 LEFT JOIN (
-  SELECT `lead`.playerId, CAST(MAX(`lead`.matchdaysLed) AS SIGNED) AS leadMatchdaysWithoutTitle
+  SELECT w.playerId, CAST(SUM(w.ledInWindow = w.windowSize) AS SIGNED) AS chokedRuns
   FROM (
-    SELECT ms.playerId, ms.tournamentId, COUNT(*) AS matchdaysLed
+    SELECT
+      ms.tournamentId,
+      ms.playerId,
+      CAST(SUM(ms.`position` = 1) AS SIGNED) AS ledInWindow,
+      CAST(COUNT(*)                AS SIGNED) AS windowSize
     FROM vTournamentMatchdayStandings ms
-    INNER JOIN Tournaments t
-      ON t.tournamentId = ms.tournamentId
-     AND t.state        = 'F'
-    LEFT JOIN vTournamentChampions c
-      ON c.tournamentId = ms.tournamentId
-     AND c.playerId     = ms.playerId
-    WHERE ms.`position` = 1
-      AND c.playerId IS NULL
-    GROUP BY ms.playerId, ms.tournamentId
-  ) `lead`
-  GROUP BY `lead`.playerId
-) led ON led.playerId = p.playerId
+    WHERE ms.matchday <  ms.matchdays
+      AND ms.matchday >  ms.matchdays - 4
+    GROUP BY ms.tournamentId, ms.playerId
+  ) w
+  INNER JOIN Tournaments t
+    ON t.tournamentId = w.tournamentId
+   AND t.state        = 'F'
+  -- El que gano el torneo no lo choreo: para el, liderar la ventana es lo
+  -- normal, no un papelon.
+  LEFT JOIN vTournamentChampions c
+    ON c.tournamentId = w.tournamentId
+   AND c.playerId     = w.playerId
+  WHERE c.playerId IS NULL
+  GROUP BY w.playerId
+) chk ON chk.playerId = p.playerId
 
 -- Puro Huevo: torneos ganados llegando de atras. No alcanza con salir campeon:
 -- en las TRES fechas previas a la ultima el campeon no tiene que haber estado
@@ -1494,7 +1509,7 @@ LATERAL (
   UNION ALL SELECT 'PICHI',
          CASE WHEN f.floorGoalDiff <= -50 THEN 'U' ELSE 'L' END, -f.floorGoalDiff, 50
   UNION ALL SELECT 'PECHOFRIO',
-         CASE WHEN f.leadMatchdaysWithoutTitle >= 5 THEN 'U' ELSE 'L' END, f.leadMatchdaysWithoutTitle, 5
+         CASE WHEN f.chokedRuns >= 1 THEN 'U' ELSE 'L' END, NULL, NULL
   UNION ALL SELECT 'PURO_HUEVO',
          CASE WHEN f.comebackTitles >= 1 THEN 'U' ELSE 'L' END, NULL, NULL
   UNION ALL SELECT 'EX_EQUIPO',
