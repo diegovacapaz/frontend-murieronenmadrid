@@ -114,13 +114,21 @@ estima leyendo. Si el código no lo confirma, la frase no se publica. Un diario
 que inventa un número deja de ser gracioso y pasa a ser mentira, y acá el que lo
 lee estuvo en la cancha y se acuerda.
 
+Y los datos para contar YA ESTÁN EN EL SANDBOX: el historial completo viaja como
+un archivo adjunto llamado historial.json, con la lista de partidos que se
+describe abajo. Abrilo con json.load y trabajá sobre eso. NO lo vuelvas a
+tipear: ya está ahí, y copiarlo a mano cuesta una fortuna y sale mal. Cae bajo
+/files/input/, en un subdirectorio con nombre de hash, así que la forma corta de
+ubicarlo es ls /files/input/*/historial.json.
+
 QUÉ HAY EN EL DOSSIER
 
-· historial — todos los partidos, del más viejo al más nuevo, con su torneo, la
-  fecha en ISO, la cancha, si fue superclásico, qué equipo ganó, el margen de
-  gol, las dos formaciones con el nombre con el que se conoce a cada jugador, y
-  wasTracked (ver más abajo: en false, el partido no se cuenta como historia).
-  Es el sustrato: todo lo que no está precalculado sale de acá.
+· historial — EL ARCHIVO historial.json DEL SANDBOX: todos los partidos, del
+  más viejo al más nuevo, con su torneo, la fecha en ISO, la cancha, si fue
+  superclásico, qué equipo ganó, el margen de gol, las dos formaciones con el
+  nombre con el que se conoce a cada jugador, y wasTracked (ver más abajo: en
+  false, el partido no se cuenta como historia). Es el sustrato: todo lo que no
+  está precalculado sale de acá.
 
 · estado.general — la histórica: totales del sistema, cruces entre equipos, la
   vitrina de campeones, la línea de torneos, los mejores por winrate, los
