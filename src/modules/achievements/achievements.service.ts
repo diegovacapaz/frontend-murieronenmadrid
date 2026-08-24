@@ -4,7 +4,7 @@ import type { IAchievementsRepository } from './interfaces/achievements.reposito
 import { ACHIEVEMENTS_REPOSITORY } from './achievements.constants';
 
 /**
- * No calcula nada, y esa es la idea: las 28 reglas viven en
+ * No calcula nada, y esa es la idea: las 30 reglas viven en
  * vPlayerAchievements. Si alguna se repitiera acá existirían dos versiones del
  * mismo logro y tarde o temprano dirían cosas distintas.
  *

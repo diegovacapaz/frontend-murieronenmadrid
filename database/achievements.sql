@@ -32,6 +32,8 @@ INSERT INTO Achievements (code, category, title, description, isBreakable, sortO
   ('MANO_A_MANO',       'G', 'Mano a Mano',                   'Empata 10 o más partidos',                              FALSE,  160),
   ('EL_CORNUDO',        'G', 'El Cornudo',                    'Gana 10 partidos seguidos',                             FALSE,  170),
   ('DEJALO_AMIGO',      'G', 'Dejalo amigo...',               'Pierde 10 partidos seguidos',                           FALSE,  180),
+  ('ESTA_MANCHA',       'G', 'Esta mancha no se borra',       'Desciende una vez',                                     FALSE,  185),
+  ('AL_MENOS_INTENTA',  'G', 'Al menos intenta',              'Desciende perdiendo los 8 partidos',                    FALSE,  187),
   ('COLECCIONISTA',     'G', 'Coleccionista',                 'Obtén 100 puntos o más en total',                       FALSE,  190),
   ('PERRO_VIEJO',       'G', 'Perro Viejo',                   'Juega 50 o más partidos en total',                      FALSE,  200),
   ('BUSCATE_UN_LABURO', 'G', 'Buscate un Laburo',             'Asiste a 20 partidos seguidos',                         FALSE,  210),

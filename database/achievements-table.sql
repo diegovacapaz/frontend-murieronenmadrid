@@ -9,7 +9,7 @@
 -- nueva de los logros vive tambien aca, para poder crearla sola:
 --
 --   node scripts/apply-sql.mjs achievements-table.sql   -- la tabla
---   node scripts/apply-sql.mjs achievements.sql         -- las 28 filas
+--   node scripts/apply-sql.mjs achievements.sql         -- las 30 filas
 --   node scripts/apply-sql.mjs                          -- vistas y procedures
 --
 -- El IF NOT EXISTS lo hace idempotente: correrlo dos veces no rompe nada.

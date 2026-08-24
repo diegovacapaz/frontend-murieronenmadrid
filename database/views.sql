@@ -957,6 +957,194 @@ LEFT JOIN (
 ) open ON open.playerId = p.playerId;
 
 -- =============================================================================
+-- DESCENSOS
+-- =============================================================================
+-- El castigo del grupo: pasar ocho partidos sin ganar y bajar de categoria.
+--
+-- Lo unico que salva es GANAR. El empate no salva: suma al contador igual que
+-- una derrota. Ocho sin ganar es ocho sin ganar, se hayan perdido todos o se
+-- haya empatado la mitad.
+--
+-- Y el contador no se reinicia al descender: dentro de un mismo tramo, cada
+-- ocho partidos es otro descenso.
+--
+--   L L E L L L L E        -> 8 sin ganar, 1 descenso
+--   L L L L L L L W L L    -> 7 y despues 2: ningun descenso, la victoria corta
+--   16 sin ganar al hilo   -> 2 descensos
+--
+-- De ahi salen los dos conceptos que usa el frontend:
+--   TRAMO    los partidos sin ganar consecutivos (lo corta una victoria)
+--   CARRERA  cada bloque de ocho partidos dentro de un tramo; la ultima puede
+--            quedar incompleta, y esa es "el camino al descenso" en curso
+--
+-- El tramo es exactamente la racha WINLESS de vPlayerStreakIslands: la tabla
+-- "Capitanes Derrota" y los descensos miden LO MISMO, y el descenso es cada
+-- ocho de esos partidos. Aca se recalcula partido por partido porque hace falta
+-- saber en que posicion del tramo cae cada uno, que es lo que reparte los
+-- partidos en carreras y lo que el perfil dibuja.
+--
+-- Igual que las rachas, cuentan TODOS los partidos, incluidos los de torneos
+-- sin detalle: el descenso acompania a la tabla historica, que tambien los
+-- cuenta.
+-- =============================================================================
+
+-- -----------------------------------------------------------------------------
+-- vPlayerWinlessRunMatches — cada partido con su tramo y su carrera
+-- -----------------------------------------------------------------------------
+-- La base de las dos vistas de abajo, y tambien lo que el perfil dibuja partido
+-- por partido. Una fila por aparicion dentro de un tramo sin ganar; las
+-- victorias no estan, son el corte y no forman parte de ningun tramo.
+--
+-- Mismo truco de islas que vPlayerStreakIslands: la resta entre la numeracion
+-- global y la que solo cuenta los partidos sin ganar se mantiene constante
+-- mientras no aparezca una victoria.
+--
+-- posInRun es la posicion del partido DENTRO del tramo, contando desde 1. Su
+-- division entera por 8 reparte el tramo en carreras —los partidos 1 a 8 son la
+-- carrera 0, los 9 a 16 la carrera 1— y el resto da la casilla que se pinta.
+-- Derrotas y empates se numeran igual: los dos acercan al descenso.
+CREATE OR REPLACE VIEW vPlayerWinlessRunMatches AS
+WITH seq AS (
+  SELECT
+    r.playerId,
+    r.matchId,
+    r.tournamentId,
+    r.playedAt,
+    r.result,
+    r.goalsDiference,
+    r.team,
+    ROW_NUMBER() OVER (PARTITION BY r.playerId ORDER BY r.playedAt, r.matchId) AS n,
+    ROW_NUMBER() OVER (
+      PARTITION BY r.playerId, r.result <> 'W' ORDER BY r.playedAt, r.matchId
+    ) AS nWinless
+  FROM vMatchPlayerResults r
+),
+runs AS (
+  SELECT
+    s.playerId,
+    s.matchId,
+    s.tournamentId,
+    s.playedAt,
+    s.result,
+    s.goalsDiference,
+    s.team,
+    s.n - s.nWinless AS runId,
+    ROW_NUMBER() OVER (
+      PARTITION BY s.playerId, s.n - s.nWinless ORDER BY s.playedAt, s.matchId
+    ) AS posInRun
+  FROM seq s
+  WHERE s.result <> 'W'
+)
+SELECT
+  r.playerId,
+  r.runId,
+  r.matchId,
+  r.tournamentId,
+  r.playedAt,
+  r.result,
+  -- Los dos datos que solo usa el detalle de cada partido en el perfil. No
+  -- entran en ningun calculo del descenso: viajan para que el globo del camino
+  -- pueda decir por cuanto y con quien, igual que el del mundialito.
+  r.goalsDiference,
+  r.team,
+  CAST(r.posInRun AS SIGNED)                       AS posInRun,
+  CAST(FLOOR((r.posInRun - 1) / 8) AS SIGNED)      AS raceNo,
+  -- La casilla de la carrera, de 1 a 8. Es lo que se pinta en el camino al
+  -- descenso: la octava es la que lo consuma.
+  CAST(((r.posInRun - 1) % 8) + 1 AS SIGNED)       AS posInRace
+FROM runs r;
+
+-- -----------------------------------------------------------------------------
+-- vPlayerRelegationRuns — una fila por carrera al descenso
+-- -----------------------------------------------------------------------------
+-- Las completas son descensos consumados; la ultima de un tramo abierto es la
+-- que esta en curso. Una carrera incompleta de un tramo YA CERRADO es una que
+-- se salvo: la victoria llego antes del octavo partido.
+--
+-- startedAt y endedAt son el primero y el ultimo partido de la carrera; endedAt
+-- es la fecha del descenso cuando la carrera esta completa.
+--
+-- isOpen distingue "todavia puede terminar en descenso" de "quedo ahi": es 1
+-- solo si el tramo sigue vivo —su ultimo partido es el ultimo que jugo esa
+-- persona— y a la carrera le faltan partidos.
+--
+-- losses viaja al lado de matches porque hay un logro que los compara: descender
+-- con los ocho perdidos, sin un solo empate que amortigue.
+CREATE OR REPLACE VIEW vPlayerRelegationRuns AS
+WITH lastPlayed AS (
+  SELECT playerId, MAX(playedAt) AS lastPlayedAt
+  FROM vMatchPlayerResults
+  GROUP BY playerId
+),
+races AS (
+  SELECT
+    m.playerId,
+    m.runId,
+    m.raceNo,
+    CAST(COUNT(*)                AS SIGNED) AS matches,
+    CAST(SUM(m.result = 'L')     AS SIGNED) AS losses,
+    CAST(SUM(m.result = 'D')     AS SIGNED) AS draws,
+    MIN(m.playedAt)                         AS startedAt,
+    MAX(m.playedAt)                         AS lastMatchAt
+  FROM vPlayerWinlessRunMatches m
+  GROUP BY m.playerId, m.runId, m.raceNo
+)
+SELECT
+  r.playerId,
+  r.runId,
+  r.raceNo,
+  -- Un identificador estable de la carrera dentro del jugador, para que el
+  -- frontend correlacione la fila con sus partidos sin componer dos columnas.
+  -- Cronologico: la carrera 1 es la primera de su vida.
+  CAST(ROW_NUMBER() OVER (
+    PARTITION BY r.playerId ORDER BY r.runId, r.raceNo
+  ) AS SIGNED)                            AS runIndex,
+  r.matches,
+  r.losses,
+  r.draws,
+  r.startedAt,
+  -- La fecha del descenso. NULL mientras la carrera no este completa: una
+  -- carrera a medias no tiene final, esta esperando o se salvo.
+  CASE WHEN r.matches >= 8 THEN r.lastMatchAt END AS endedAt,
+  r.lastMatchAt,
+  CAST(r.matches >= 8 AS SIGNED)          AS isRelegated,
+  -- Descendio perdiendolos todos: ni un empate en las ocho fechas.
+  CAST(r.matches >= 8 AND r.losses = r.matches AS SIGNED) AS isAllLosses,
+  CAST(r.lastMatchAt = lp.lastPlayedAt AND r.matches < 8 AS SIGNED) AS isOpen
+FROM races r
+INNER JOIN lastPlayed lp ON lp.playerId = r.playerId;
+
+-- -----------------------------------------------------------------------------
+-- vPlayerRelegations — cuantas veces descendio cada jugador
+-- -----------------------------------------------------------------------------
+-- El resumen que consumen la tabla de descensos, la insignia del perfil y los
+-- dos logros. Estan TODOS los jugadores, con cero los que nunca bajaron: los
+-- logros necesitan la fila para poder mostrarse en gris.
+--
+-- worstRaceMatches es lo mas cerca que estuvo del descenso: 8 si bajo, y si no,
+-- el maximo que alcanzo alguna carrera. Es el progreso de la medalla.
+CREATE OR REPLACE VIEW vPlayerRelegations AS
+SELECT
+  p.playerId,
+  COALESCE(r.relegations, 0)        AS relegations,
+  COALESCE(r.allLossRelegations, 0) AS allLossRelegations,
+  COALESCE(r.worstRaceMatches, 0)   AS worstRaceMatches,
+  r.firstRelegationAt,
+  r.lastRelegationAt
+FROM Players p
+LEFT JOIN (
+  SELECT
+    playerId,
+    CAST(SUM(isRelegated) AS SIGNED) AS relegations,
+    CAST(SUM(isAllLosses) AS SIGNED) AS allLossRelegations,
+    CAST(MAX(matches)     AS SIGNED) AS worstRaceMatches,
+    MIN(endedAt)                     AS firstRelegationAt,
+    MAX(endedAt)                     AS lastRelegationAt
+  FROM vPlayerRelegationRuns
+  GROUP BY playerId
+) r ON r.playerId = p.playerId;
+
+-- =============================================================================
 -- ASISTENCIA
 -- =============================================================================
 -- La base guarda quien jugo, nunca quien falto. La ausencia hay que deducirla:
@@ -1195,7 +1383,7 @@ GROUP BY s.playerId;
 -- vPlayerAchievementFacts — los numeros crudos que miran las reglas
 -- -----------------------------------------------------------------------------
 -- Una fila por jugador, con TODOS los jugadores: el que no jugo nunca aparece
--- con ceros, para que su solapa abra igual con las 28 en gris.
+-- con ceros, para que su solapa abra igual con las 30 en gris.
 --
 -- Cada LEFT JOIN resuelve una familia de hechos. Ninguno aplica umbrales: eso
 -- es trabajo de vPlayerAchievements. Aca solo se cuenta.
@@ -1236,6 +1424,12 @@ SELECT
   COALESCE(pk.floorGoalDiff, 0)          AS floorGoalDiff,
   COALESCE(att.bestAttendanceStreak, 0)  AS bestAttendanceStreak,
   COALESCE(att.bestAbsenceStreak, 0)     AS bestAbsenceStreak,
+
+  -- Descensos. worstRaceMatches es lo mas cerca que estuvo de bajar: alimenta
+  -- la barra de la medalla, que se llena aunque nunca haya descendido.
+  COALESCE(rel.relegations, 0)           AS relegations,
+  COALESCE(rel.allLossRelegations, 0)    AS allLossRelegations,
+  COALESCE(rel.worstRaceMatches, 0)      AS worstRelegationMatches,
 
   -- Liderazgos fecha a fecha
   COALESCE(chk.chokedRuns, 0)            AS chokedRuns,
@@ -1307,6 +1501,11 @@ LEFT JOIN vGeneralScoreboard gen ON gen.playerId = p.playerId
 LEFT JOIN vPlayerStreaks       str ON str.playerId = p.playerId
 LEFT JOIN vPlayerGoalDiffPeaks pk  ON pk.playerId  = p.playerId
 LEFT JOIN vPlayerAttendanceStreaks att ON att.playerId = p.playerId
+
+-- Descensos. La vista ya trae a todos los jugadores con cero, asi que el JOIN
+-- podria ser INNER; queda LEFT para que agregar una fila a Players no dependa
+-- de que la otra vista la tenga.
+LEFT JOIN vPlayerRelegations   rel ON rel.playerId = p.playerId
 
 -- Pechofrio: la antitesis exacta de Puro Huevo. Misma ventana —las tres fechas
 -- previas a la ultima— y el mismo torneo puede repartir los dos logros, uno a
@@ -1448,7 +1647,7 @@ LEFT JOIN (
 -- filtro llega despues de las 28 evaluaciones.
 --
 -- Con LATERAL los hechos se escanean UNA sola vez y por cada fila se despliegan
--- los 28 logros. El UNION ALL de adentro no toca ninguna tabla: son 28 filas
+-- los 30 logros. El UNION ALL de adentro no toca ninguna tabla: son 30 filas
 -- constantes armadas con las columnas de f, y el plan las muestra como "Rows
 -- fetched before execution", sin materializar nada. La vista entera pasa a
 -- costar 0,13s, lo mismo que los hechos solos, y filtrada por un jugador
@@ -1497,6 +1696,16 @@ LATERAL (
          CASE WHEN f.bestWinStreak >= 10 THEN 'U' ELSE 'L' END, f.bestWinStreak, 10
   UNION ALL SELECT 'DEJALO_AMIGO',
          CASE WHEN f.worstLossStreak >= 10 THEN 'U' ELSE 'L' END, f.worstLossStreak, 10
+  -- No mira el contador de descensos sino lo mas cerca que estuvo de uno, para
+  -- que la barra se llene mientras se hunde y no salte de vacia a completa. Con
+  -- un descenso ya son 8, asi que el umbral es el mismo numero.
+  UNION ALL SELECT 'ESTA_MANCHA',
+         CASE WHEN f.relegations >= 1 THEN 'U' ELSE 'L' END, f.worstRelegationMatches, 8
+  -- Descender es facil de a empates; este pide las ocho perdidas. Sin barra: no
+  -- hay medio camino que mostrar -siete derrotas y un empate no es "casi", es
+  -- otra cosa- y el progreso seria mentir sobre lo que falta.
+  UNION ALL SELECT 'AL_MENOS_INTENTA',
+         CASE WHEN f.allLossRelegations >= 1 THEN 'U' ELSE 'L' END, NULL, NULL
   UNION ALL SELECT 'COLECCIONISTA',
          CASE WHEN f.points >= 100 THEN 'U' ELSE 'L' END, FLOOR(f.points), 100
   UNION ALL SELECT 'PERRO_VIEJO',

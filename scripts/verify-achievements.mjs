@@ -352,6 +352,9 @@ const PASS_THROUGH_COLUMNS = [
   ['vPlayerGoalDiffPeaks',     'floorGoalDiff',        'floorGoalDiff'],
   ['vPlayerAttendanceStreaks', 'bestAttendanceStreak', 'bestAttendanceStreak'],
   ['vPlayerAttendanceStreaks', 'bestAbsenceStreak',    'bestAbsenceStreak'],
+  ['vPlayerRelegations',       'relegations',          'relegations'],
+  ['vPlayerRelegations',       'allLossRelegations',   'allLossRelegations'],
+  ['vPlayerRelegations',       'worstRaceMatches',     'worstRelegationMatches'],
   ['vMundialitoPlayerStats',   'titles',               'mundialitoTitles'],
   ['vMundialitoPlayerStats',   'perfectRuns',          'perfectRuns'],
   ['vMundialitoPlayerStats',   'semis',                'semiRuns'],
@@ -587,7 +590,7 @@ function compareLastLeads(expected, actual) {
 }
 
 /**
- * Las 28 reglas, escritas una por una contra los hechos. Es deliberadamente
+ * Las 30 reglas, escritas una por una contra los hechos. Es deliberadamente
  * repetitivo: si esto y el SQL coinciden, los dos dicen lo mismo.
  *
  * 'U' obtenido, 'L' bloqueado, 'B' roto (la maldicion ya no se puede conseguir).
@@ -611,6 +614,12 @@ function expectedStates(f) {
     MANO_A_MANO:       withProgress(reached(f.draws, 10), f.draws, 10),
     EL_CORNUDO:        withProgress(reached(f.bestWinStreak, 10), f.bestWinStreak, 10),
     DEJALO_AMIGO:      withProgress(reached(f.worstLossStreak, 10), f.worstLossStreak, 10),
+    // El estado sale del contador de descensos, pero la barra del progreso sale
+    // de otro hecho: lo mas cerca que estuvo de uno. Los dos numeros tienen que
+    // moverse juntos —con un descenso, worstRelegationMatches ya es 8— y por eso
+    // se comparan los dos y no solo el estado.
+    ESTA_MANCHA:       withProgress(reached(f.relegations, 1), f.worstRelegationMatches, 8),
+    AL_MENOS_INTENTA:  withProgress(reached(f.allLossRelegations, 1), null, null),
     COLECCIONISTA:     withProgress(reached(f.points, 100), Math.floor(f.points), 100),
     PERRO_VIEJO:       withProgress(reached(f.played, 50), f.played, 50),
     BUSCATE_UN_LABURO: withProgress(reached(f.bestAttendanceStreak, 20), f.bestAttendanceStreak, 20),
@@ -997,9 +1006,9 @@ async function main() {
     }
 
     // -------------------------------------------------------------------------
-    // Estados de los 28 logros (vPlayerAchievements)
+    // Estados de los 30 logros (vPlayerAchievements)
     // -------------------------------------------------------------------------
-    // expectedStates() son las 28 reglas escritas una por una contra los
+    // expectedStates() son las 30 reglas escritas una por una contra los
     // hechos, sin traducir el SQL de la vista a JS. actualFacts ya trae una
     // fila por jugador (incluido el que nunca jugo, en cero) de la comparacion
     // de cableado de arriba. Se comparan las tres columnas -state, progress y
@@ -1007,11 +1016,11 @@ async function main() {
     // cambiado no mueve ningun state y pasaria de largo si solo se mirara eso.
     //
     // Ademas se verifican tres cosas baratas: que cada jugador tenga
-    // exactamente 28 filas (ni una rama de mas ni de menos), que todo code que
+    // exactamente 30 filas (ni una rama de mas ni de menos), que todo code que
     // devuelve la vista exista en Achievements (el bug de truncamiento del
     // UNION que documenta vMundialitoRuns entraria aca: un code truncado nunca
     // calza con el catalogo) y, al reves, que todo code de Achievements
-    // aparezca en la vista -si se agrega un logro 29 al catalogo y se olvida la
+    // aparezca en la vista -si se agrega un logro 31 al catalogo y se olvida la
     // rama, esto lo agarra-.
     const [catalog] = await connection.query('SELECT code FROM Achievements');
     const catalogCodes = new Set(catalog.map((row) => row.code));
@@ -1074,8 +1083,8 @@ async function main() {
 
     for (const playerId of playerIds) {
       const count = rowCountByPlayer.get(playerId) ?? 0;
-      if (count !== 28) {
-        stateProblems.push(`estados: jugador ${playerId} tiene ${count} filas, esperadas 28`);
+      if (count !== 30) {
+        stateProblems.push(`estados: jugador ${playerId} tiene ${count} filas, esperadas 30`);
       }
     }
 
@@ -1098,7 +1107,7 @@ async function main() {
       if (stateProblems.length > 40) console.error(`  ... y ${stateProblems.length - 40} mas`);
       process.exitCode = 1;
     } else {
-      console.log('estados de logros OK (28 por jugador, state/progress/target, codes en las dos direcciones)');
+      console.log('estados de logros OK (30 por jugador, state/progress/target, codes en las dos direcciones)');
     }
   } finally {
     await connection.end();

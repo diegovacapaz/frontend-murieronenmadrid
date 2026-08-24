@@ -13,7 +13,7 @@ export class AchievementsController {
   @ApiOperation({
     summary: 'Logros de un jugador',
     description:
-      'Los 28 logros con su estado: obtenido, bloqueado o roto. No se guardan ' +
+      'Los 30 logros con su estado: obtenido, bloqueado o roto. No se guardan ' +
       'en ninguna tabla, se deducen del historial en el momento de pedirlos.',
   })
   @ApiResponse({ status: 404, description: 'Jugador no encontrado' })

@@ -79,7 +79,9 @@ export class StreakRecordDto {
   @ApiPropertyOptional({ nullable: true })
   photo!: string | null;
 
-  @ApiProperty({ description: 'Partidos seguidos sin perder.' })
+  @ApiProperty({
+    description: 'Partidos seguidos. Sin perder en streakRecords, sin ganar en winlessRecords.',
+  })
   length!: number;
 
   @ApiProperty()
@@ -90,6 +92,29 @@ export class StreakRecordDto {
 
   @ApiProperty({ description: '1 si la racha sigue viva.' })
   isOpen!: number;
+}
+
+export class RelegationRankDto {
+  @ApiProperty()
+  playerId!: number;
+
+  @ApiProperty()
+  displayName!: string;
+
+  @ApiPropertyOptional({ nullable: true })
+  photo!: string | null;
+
+  @ApiProperty({ description: 'Cuantas veces descendio.' })
+  relegations!: number;
+
+  @ApiProperty({ description: 'De esos, cuantos con los ocho partidos perdidos.' })
+  allLossRelegations!: number;
+
+  @ApiProperty({ description: 'El octavo partido de su primer descenso.' })
+  firstRelegationAt!: Date;
+
+  @ApiProperty({ description: 'El octavo partido de su ultimo descenso.' })
+  lastRelegationAt!: Date;
 }
 
 export class GeneralStatsResponseDto {
@@ -116,4 +141,18 @@ export class GeneralStatsResponseDto {
     description: 'Las rachas invictas mas largas de la historia.',
   })
   streakRecords!: StreakRecordDto[];
+
+  @ApiProperty({
+    type: [StreakRecordDto],
+    description:
+      'Las rachas sin ganar mas largas. Es la misma medida del descenso: cada ' +
+      'ocho partidos sin ganar es una bajada de categoria.',
+  })
+  winlessRecords!: StreakRecordDto[];
+
+  @ApiProperty({
+    type: [RelegationRankDto],
+    description: 'Los que descendieron alguna vez, de mas a menos descensos.',
+  })
+  relegations!: RelegationRankDto[];
 }

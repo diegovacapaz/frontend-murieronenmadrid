@@ -13,7 +13,7 @@
 -- GetPlayerAchievements — la solapa de logros de un jugador
 -- -----------------------------------------------------------------------------
 -- Result sets, en orden:
---   1. achievements  los 28 con su catalogo y su estado, en orden de grilla
+--   1. achievements  los 30 con su catalogo y su estado, en orden de grilla
 --   2. summary       cuantos lleva sobre el total, global y por categoria
 --
 -- El INNER JOIN va contra el catalogo y no al reves a proposito: si algun dia
