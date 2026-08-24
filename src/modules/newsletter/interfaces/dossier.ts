@@ -37,6 +37,26 @@ export interface DossierEstado {
   /** `null` cuando no hay ningún torneo en curso; entre temporadas es lo normal. */
   torneoActivo: unknown;
   mundialito: unknown;
+  /**
+   * El catálogo de los 30 logros, UNA vez: `code`, `title`, `description`,
+   * `category`, `isBreakable`.
+   *
+   * Sin esto el modelo recibe `{"code":"CAZADOR","progress":11,"target":10}` y
+   * no tiene idea de qué es CAZADOR, así que no puede escribir el anticipo —
+   * que es la mitad del contenido cuando la jornada fue floja. Sale del mismo
+   * `GetPlayerAchievements[0]`, que ya lo trae en cada llamada.
+   *
+   * Va acá y no por jugador porque son 30 filas de texto: una vez son ~1k
+   * tokens, veintisiete veces serían 27k por nada. Y va en `estado` y no en
+   * `contexto` para que el diff note el día que se agregue un logro nuevo.
+   */
+  catalogoLogros: Array<{
+    code: string;
+    title: string;
+    description: string;
+    category: string;
+    isBreakable: boolean;
+  }>;
   jugadores: Record<
     number,
     {

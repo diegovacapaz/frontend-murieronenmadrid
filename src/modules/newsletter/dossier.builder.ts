@@ -29,6 +29,10 @@ interface TorneoEnCursoDB extends Row {
   tournamentId: number;
 }
 
+interface MaxMatchIdDB extends Row {
+  maxMatchId: number;
+}
+
 interface GroupLoreDB extends Row {
   groupLore: string | null;
 }
@@ -38,8 +42,11 @@ interface PlayerLoreDB extends Row {
   notes: string;
 }
 
-/** Las dos piezas de lore que van al contexto, listas para desparramar ahí. */
-type DossierLore = Pick<Dossier['contexto'], 'loreGrupo' | 'lorePorJugador'>;
+/** Las dos piezas de lore que van al contexto. */
+interface DossierLore {
+  grupo: string | null;
+  porJugador: Record<number, string>;
+}
 
 /**
  * Arma todo lo que el modelo necesita para escribir una edición.
@@ -96,6 +103,7 @@ export class DossierBuilder {
     const mundialito = await this.db.callMulti<Row[][]>('GetMundialitoBoard', []);
     const lore = await this.lore();
 
+    let catalogoLogros: DossierEstado['catalogoLogros'] = [];
     const porJugador: DossierEstado['jugadores'] = {};
     for (const jugador of jugadores) {
       // El orden de la indexación es el contrato con procedures/stats.sql:
@@ -108,6 +116,21 @@ export class DossierBuilder {
       const logros = await this.db.callMulti<Row[][]>('GetPlayerAchievements', [
         jugador.playerId,
       ]);
+      const filasLogros = logros[0] ?? [];
+
+      // El catálogo sale de la PRIMERA llamada a GetPlayerAchievements: las 27
+      // devuelven las mismas 30 filas de catálogo y lo único que cambia es el
+      // estado. Se llena una sola vez, y con `length === 0` como condición para
+      // que un primer jugador sin filas no lo deje vacío para siempre.
+      if (catalogoLogros.length === 0) {
+        catalogoLogros = filasLogros.map((fila) => ({
+          code: String(fila.code),
+          title: String(fila.title),
+          description: String(fila.description),
+          category: String(fila.category),
+          isBreakable: Boolean(fila.isBreakable),
+        }));
+      }
 
       porJugador[jugador.playerId] = {
         displayName: jugador.displayName,
@@ -118,7 +141,7 @@ export class DossierBuilder {
         // progress/target es de donde salen los anticipos ("a Tito le faltan
         // dos partidos para el Perro Viejo"). No se filtra por estado ni se
         // tiran las columnas: un logro bloqueado con progreso es una nota.
-        logros: (logros[0] ?? []).map((fila) => ({
+        logros: filasLogros.map((fila) => ({
           code: String(fila.code),
           state: String(fila.state),
           progress: fila.progress as number | null,
@@ -137,14 +160,24 @@ export class DossierBuilder {
         general,
         torneoActivo,
         mundialito,
+        catalogoLogros,
         jugadores: porJugador,
       },
       historial,
       contexto: {
         fecha: new Date().toISOString().slice(0, 10),
-        ultimoMatchId: historial.at(-1)?.matchId ?? 0,
+        // MAX(matchId), NO el último del historial. El historial viene ordenado
+        // por `playedAt, matchId`, y las dos cosas coinciden solo mientras nadie
+        // cargue un partido con fecha retroactiva — que `CreateMatch` y
+        // `UpdateMatch` permiten sin validar.
+        //
+        // Si alguna vez `ultimoMatchId < MAX(matchId)`, el guard del cron
+        // (`MAX(matchId) != lastMatchId`) queda verdadero PARA SIEMPRE y el
+        // diario intenta publicar todos los días sobre material que ya contó.
+        ultimoMatchId: await this.maxMatchId(),
         titularesRecientes,
-        ...lore,
+        loreGrupo: lore.grupo,
+        lorePorJugador: lore.porJugador,
       },
     };
   }
@@ -252,12 +285,36 @@ export class DossierBuilder {
         `SELECT playerId, notes FROM PlayerLore ORDER BY playerId`,
       );
 
-      const lorePorJugador: Record<number, string> = {};
+      const porJugador: Record<number, string> = {};
       for (const nota of notas) {
-        lorePorJugador[nota.playerId] = nota.notes;
+        porJugador[nota.playerId] = nota.notes;
       }
 
-      return { loreGrupo: config[0]?.groupLore ?? null, lorePorJugador };
+      return { grupo: config[0]?.groupLore ?? null, porJugador };
+    });
+  }
+
+  /**
+   * La marca de agua del diario: el id más alto que existe, no el del último
+   * partido del historial.
+   *
+   * Son dos cosas distintas y la diferencia importa. El historial va ordenado
+   * por `playedAt`, así que su último elemento es el partido más RECIENTE, y el
+   * id más alto es el último CARGADO. Coinciden mientras nadie use una fecha
+   * retroactiva, cosa que `CreateMatch` y `UpdateMatch` aceptan sin chistar.
+   *
+   * El guard del cron compara este número contra `MAX(matchId)`: si el dossier
+   * guardara uno más chico, la comparación daría "hay partidos nuevos" todas
+   * las madrugadas para siempre, y el diario gastaría una llamada a la API por
+   * día contando material que ya contó.
+   */
+  private async maxMatchId(): Promise<number> {
+    return this.db.withConnection(async (conn) => {
+      const [rows] = await conn.execute<MaxMatchIdDB[] & RowDataPacket[]>(
+        `SELECT COALESCE(MAX(matchId), 0) AS maxMatchId FROM Matches`,
+      );
+
+      return rows[0]?.maxMatchId ?? 0;
     });
   }
 
