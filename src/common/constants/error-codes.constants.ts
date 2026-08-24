@@ -54,6 +54,8 @@ export const AppErrorCode = {
 
   // ── Newsletter ──
   NEWSLETTER_EDITION_NOT_FOUND: 'NEWSLETTER_EDITION_NOT_FOUND',
+  NEWSLETTER_ALREADY_GENERATING: 'NEWSLETTER_ALREADY_GENERATING',
+  NEWSLETTER_DISABLED: 'NEWSLETTER_DISABLED',
 } as const;
 
 export type AppErrorCodeValue = (typeof AppErrorCode)[keyof typeof AppErrorCode];

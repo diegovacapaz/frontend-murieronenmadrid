@@ -1,6 +1,15 @@
-import { Injectable, InternalServerErrorException } from '@nestjs/common';
+import {
+  Injectable,
+  InternalServerErrorException,
+  NotFoundException,
+} from '@nestjs/common';
+import { AppErrorCode } from '../../common/constants/error-codes.constants';
 import { DatabaseService } from '../../database/database.service';
-import type { PoolConnection, RowDataPacket } from '../../database/database.types';
+import type {
+  PoolConnection,
+  ResultSetHeader,
+  RowDataPacket,
+} from '../../database/database.types';
 import {
   Edition,
   EditionSummary,
@@ -16,7 +25,11 @@ import {
   EditionSummaryDB,
   LastEditionDB,
 } from './interfaces/database';
-import { INewsletterRepository } from './interfaces/newsletter.repository.interface';
+import {
+  DatosEdicion,
+  INewsletterRepository,
+} from './interfaces/newsletter.repository.interface';
+import type { NotaValidada } from './interfaces/validacion';
 import { RECENT_HEADLINES } from './newsletter.constants';
 
 /**
@@ -126,18 +139,38 @@ export class NewsletterRepository implements INewsletterRepository {
    * `findLatest`: la fecha es lo que el lector entiende por "la última".
    */
   async findLastEdition(): Promise<LastEdition | null> {
-    return this.db.withConnection(async (conn) => {
-      const [filas] = await conn.execute<LastEditionDB[] & RowDataPacket[]>(
-        `SELECT e.editionId, e.editionNumber,
-                DATE_FORMAT(e.publishedOn, '%Y-%m-%d') AS publishedOn,
-                e.lastMatchId, e.snapshotVersion, e.snapshot
-           FROM NewsletterEditions e
-          ORDER BY e.publishedOn DESC
-          LIMIT 1`,
-      );
+    return this.db.withConnection((conn) => this.leerEdicionAnterior(conn, null));
+  }
 
-      const fila = filas[0];
-      return fila ? NewsletterFactory.toLastEdition(fila) : null;
+  /**
+   * La edición inmediatamente anterior a una fecha. La usa `regenerar`.
+   *
+   * Es la MISMA consulta que `findLastEdition` con un WHERE de más, y por eso
+   * comparten cuerpo: son la misma pregunta —"¿contra qué foto me comparo?"—
+   * hecha desde dos puntos distintos de la línea de tiempo. Dos copias del SQL
+   * serían dos lugares donde acordarse del `DATE_FORMAT`.
+   *
+   * El `<` es estricto a propósito: la edición de esa misma fecha es la que se
+   * está reescribiendo, así que compararse contra ella sería compararse contra
+   * uno mismo y no reportar ningún cambio.
+   */
+  async findEditionBefore(date: string): Promise<LastEdition | null> {
+    return this.db.withConnection((conn) => this.leerEdicionAnterior(conn, date));
+  }
+
+  /**
+   * `MAX(matchId)`, o null si todavía no se cargó ningún partido.
+   *
+   * Un agregado sobre una tabla vacía devuelve UNA fila con NULL adentro, no
+   * cero filas: por eso se lee el valor de `filas[0]` y no el largo del arreglo.
+   */
+  async findMaxMatchId(): Promise<number | null> {
+    return this.db.withConnection(async (conn) => {
+      const [filas] = await conn.execute<
+        { maxMatchId: number | null }[] & RowDataPacket[]
+      >(`SELECT MAX(matchId) AS maxMatchId FROM Matches`);
+
+      return filas[0]?.maxMatchId ?? null;
     });
   }
 
@@ -206,6 +239,222 @@ export class NewsletterRepository implements INewsletterRepository {
 
       return filas.map((fila) => fila.headline);
     });
+  }
+
+  // ─── Las dos escrituras ─────────────────────────────────────────────────────
+  //
+  // Las únicas del módulo, y las dos van por `withTransaction` y no por
+  // `withConnection`. No es preferencia: guardar una edición son tres INSERT
+  // que valen como uno solo. Una edición sin notas, o un `editionNumber`
+  // quemado por una fila que no llegó a existir, es basura que después hay que
+  // limpiar a mano en la base de producción.
+
+  /**
+   * Guarda una edición nueva. Tres INSERT, una transacción.
+   *
+   * El `editionNumber` se calcula ACÁ ADENTRO y no lo elige quien llama: es
+   * `COALESCE(MAX(editionNumber), 0) + 1`, así que la primera edición del
+   * sistema es la Nº 1 sin que nadie tenga que sembrar nada. Ese SELECT es una
+   * lectura consistente y no bloquea, o sea que dos transacciones simultáneas
+   * podrían sacar el mismo número — de eso se ocupan el candado del service y,
+   * abajo de todo, los dos UNIQUE de la tabla: la segunda falla al insertar en
+   * vez de duplicar la edición.
+   *
+   * La edición se relee al final CON LA MISMA conexión, todavía adentro de la
+   * transacción: es la forma de devolver la entidad completa —notas con sus
+   * jugadores, `displayName` y foto ya resueltos por vPlayerDetail— sin armarla
+   * a mano y sin arriesgar que otro escriba en el medio.
+   */
+  async insertEdition(datos: DatosEdicion): Promise<Edition> {
+    return this.db.withTransaction(async (conn) => {
+      const [filas] = await conn.execute<{ proximo: number }[] & RowDataPacket[]>(
+        `SELECT COALESCE(MAX(editionNumber), 0) + 1 AS proximo FROM NewsletterEditions`,
+      );
+      const editionNumber = filas[0]?.proximo ?? 1;
+
+      const [resultado] = await conn.execute<ResultSetHeader>(
+        `INSERT INTO NewsletterEditions
+                (editionNumber, publishedOn, lastMatchId, snapshotVersion, snapshot,
+                 model, inputTokens, outputTokens)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          editionNumber,
+          datos.publishedOn,
+          datos.lastMatchId,
+          datos.snapshotVersion,
+          // La columna es JSON y el driver no serializa objetos solo: sin el
+          // stringify entra el literal "[object Object]" y MySQL lo rechaza.
+          JSON.stringify(datos.snapshot),
+          datos.model,
+          datos.inputTokens,
+          datos.outputTokens,
+        ],
+      );
+
+      const editionId = resultado.insertId;
+      await this.insertarNotas(conn, editionId, datos.notas);
+
+      return this.leerEdicion(conn, editionId);
+    });
+  }
+
+  /**
+   * Reescribe la edición de esa fecha. Es la misma edición, no una nueva.
+   *
+   * `editionNumber` y `publishedOn` NO se tocan: el diario Nº 7 sigue siendo el
+   * Nº 7 aunque se le cambien todas las notas. Lo que se reemplaza es el
+   * contenido —notas y jugadores— y lo que se actualiza es de qué material
+   * salió: puntero, snapshot, modelo y tokens.
+   *
+   * El borrado de las notas es un DELETE sobre `NewsletterArticles` y alcanza:
+   * `NewsletterArticlePlayers` cuelga con ON DELETE CASCADE, así que los
+   * jugadores se van con sus notas. Borrar las dos tablas a mano sería repetir
+   * una regla que ya vive en el DDL.
+   *
+   * El `FOR UPDATE` bloquea la fila mientras se la reescribe: sin él, dos
+   * regeneraciones de la misma fecha podrían borrar cada una las notas de la
+   * otra y dejar la edición con las de ninguna.
+   */
+  async replaceEdition(date: string, datos: DatosEdicion): Promise<Edition> {
+    return this.db.withTransaction(async (conn) => {
+      const [filas] = await conn.execute<{ editionId: number }[] & RowDataPacket[]>(
+        `SELECT editionId FROM NewsletterEditions WHERE publishedOn = ? FOR UPDATE`,
+        [date],
+      );
+
+      const fila = filas[0];
+      if (!fila) {
+        throw new NotFoundException({
+          message: 'Edition not found',
+          errorCode: AppErrorCode.NEWSLETTER_EDITION_NOT_FOUND,
+        });
+      }
+
+      const { editionId } = fila;
+
+      await conn.execute(
+        `UPDATE NewsletterEditions
+            SET lastMatchId = ?, snapshotVersion = ?, snapshot = ?,
+                model = ?, inputTokens = ?, outputTokens = ?
+          WHERE editionId = ?`,
+        [
+          datos.lastMatchId,
+          datos.snapshotVersion,
+          JSON.stringify(datos.snapshot),
+          datos.model,
+          datos.inputTokens,
+          datos.outputTokens,
+          editionId,
+        ],
+      );
+
+      await conn.execute(`DELETE FROM NewsletterArticles WHERE editionId = ?`, [
+        editionId,
+      ]);
+      await this.insertarNotas(conn, editionId, datos.notas);
+
+      return this.leerEdicion(conn, editionId);
+    });
+  }
+
+  /**
+   * Las notas y sus jugadores, en el orden en que vinieron.
+   *
+   * Una nota por INSERT y no un multi-row: hace falta el `insertId` de cada una
+   * para colgarle sus jugadores. Los jugadores de una nota SÍ van en un solo
+   * INSERT con varios VALUES, que es donde el multi-row rinde.
+   *
+   * `sortOrder` es el índice del arreglo, y el arreglo ya viene ordenado por el
+   * validador con la portada primera. Que el orden del diario sea el orden del
+   * arreglo —y no algo que se recalcule acá— es lo que hace que lo que se leyó
+   * en el dry-run sea lo que se ve en la pantalla.
+   */
+  private async insertarNotas(
+    conn: PoolConnection,
+    editionId: number,
+    notas: NotaValidada[],
+  ): Promise<void> {
+    for (const [indice, nota] of notas.entries()) {
+      const [resultado] = await conn.execute<ResultSetHeader>(
+        `INSERT INTO NewsletterArticles
+                (editionId, section, headline, standfirst, body, sortOrder)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+        [editionId, nota.seccion, nota.titular, nota.copete, nota.cuerpo, indice],
+      );
+
+      if (nota.jugadores.length === 0) continue;
+
+      // Los placeholders se arman con la cantidad de jugadores y los valores
+      // van aparte: interpolar el `(?, ?, ?)` es contar filas, no meter datos.
+      // Los repetidos ya los unificó el validador —la PK es (articleId,
+      // playerId)— así que acá no puede saltar un ER_DUP_ENTRY.
+      const placeholders = nota.jugadores.map(() => '(?, ?, ?)').join(', ');
+      // `SqlParam` no sirve acá: admite `undefined`, que `execute` rechaza —lo
+      // convierte a null el DatabaseService, y estas consultas no pasan por él.
+      const valores: Array<number | string> = nota.jugadores.flatMap((jugador) => [
+        resultado.insertId,
+        jugador.playerId,
+        jugador.rol,
+      ]);
+
+      await conn.execute(
+        `INSERT INTO NewsletterArticlePlayers (articleId, playerId, role)
+         VALUES ${placeholders}`,
+        valores,
+      );
+    }
+  }
+
+  /**
+   * Una edición recién escrita, releída entera con la conexión de la
+   * transacción. Es lo que devuelven las dos escrituras.
+   */
+  private async leerEdicion(conn: PoolConnection, editionId: number): Promise<Edition> {
+    const [filas] = await conn.execute<EditionDB[] & RowDataPacket[]>(
+      `SELECT e.editionId, e.editionNumber,
+              DATE_FORMAT(e.publishedOn, '%Y-%m-%d') AS publishedOn, e.publishedAt
+         FROM NewsletterEditions e
+        WHERE e.editionId = ?`,
+      [editionId],
+    );
+
+    const fila = filas[0];
+    if (!fila) {
+      // Inalcanzable: la fila se acaba de escribir en esta misma transacción.
+      // Está para que el tipo sea `Edition` y no `Edition | null`, que
+      // obligaría a todo el flujo de arriba a manejar un null imposible.
+      throw new InternalServerErrorException(`La edición ${editionId} no se pudo releer`);
+    }
+
+    return this.loadEdition(conn, fila);
+  }
+
+  /**
+   * El cuerpo compartido de `findLastEdition` y `findEditionBefore`.
+   *
+   * El `DATE_FORMAT` NO es cosmético y no se puede sacar: ver la nota de
+   * `findLastEdition`.
+   */
+  private async leerEdicionAnterior(
+    conn: PoolConnection,
+    antesDe: string | null,
+  ): Promise<LastEdition | null> {
+    const filtro = antesDe === null ? '' : 'WHERE e.publishedOn < ?';
+    const parametros: string[] = antesDe === null ? [] : [antesDe];
+
+    const [filas] = await conn.execute<LastEditionDB[] & RowDataPacket[]>(
+      `SELECT e.editionId, e.editionNumber,
+              DATE_FORMAT(e.publishedOn, '%Y-%m-%d') AS publishedOn,
+              e.lastMatchId, e.snapshotVersion, e.snapshot
+         FROM NewsletterEditions e
+         ${filtro}
+        ORDER BY e.publishedOn DESC
+        LIMIT 1`,
+      parametros,
+    );
+
+    const fila = filas[0];
+    return fila ? NewsletterFactory.toLastEdition(fila) : null;
   }
 
   /**
