@@ -31,11 +31,16 @@ export class NewsletterRepository implements INewsletterRepository {
 
   async findLatest(): Promise<Edition | null> {
     return this.db.withConnection(async (conn) => {
+      // El ORDER BY va calificado con el alias de la tabla a propósito: sin el
+      // `e.`, MySQL lo resuelve al alias del SELECT —el string del DATE_FORMAT—
+      // y no a la columna DATE. Acá ordena igual porque las fechas ISO ordenan
+      // como texto, pero el día que el formato cambie no queremos descubrirlo
+      // por un archivo desordenado.
       const [editions] = await conn.execute<EditionDB[] & RowDataPacket[]>(
-        `SELECT editionNumber, DATE_FORMAT(publishedOn, '%Y-%m-%d') AS publishedOn,
-                publishedAt, editionId
-           FROM NewsletterEditions
-          ORDER BY publishedOn DESC
+        `SELECT e.editionNumber, DATE_FORMAT(e.publishedOn, '%Y-%m-%d') AS publishedOn,
+                e.publishedAt, e.editionId
+           FROM NewsletterEditions e
+          ORDER BY e.publishedOn DESC
           LIMIT 1`,
       );
 
@@ -49,10 +54,10 @@ export class NewsletterRepository implements INewsletterRepository {
   async findByDate(date: string): Promise<Edition | null> {
     return this.db.withConnection(async (conn) => {
       const [editions] = await conn.execute<EditionDB[] & RowDataPacket[]>(
-        `SELECT editionNumber, DATE_FORMAT(publishedOn, '%Y-%m-%d') AS publishedOn,
-                publishedAt, editionId
-           FROM NewsletterEditions
-          WHERE publishedOn = ?`,
+        `SELECT e.editionNumber, DATE_FORMAT(e.publishedOn, '%Y-%m-%d') AS publishedOn,
+                e.publishedAt, e.editionId
+           FROM NewsletterEditions e
+          WHERE e.publishedOn = ?`,
         [date],
       );
 
@@ -67,13 +72,25 @@ export class NewsletterRepository implements INewsletterRepository {
     return this.db.withConnection(async (conn) => {
       // LEFT JOIN y no INNER: una edición sin portada tiene que seguir
       // apareciendo en el archivo, aunque el titular venga vacío.
+      //
+      // El GROUP BY es lo que garantiza UNA fila por edición. Sin él, el join
+      // devuelve una fila por nota de portada, y hoy nada impide que haya dos:
+      // el CHECK de la tabla restringe la letra de `section`, no la cantidad de
+      // notas con esa letra, y el unique sobre (editionId, section) todavía no
+      // existe. Quien escribe las notas es un modelo de lenguaje, así que "no
+      // debería pasar" no alcanza como garantía: una edición duplicada en el
+      // archivo sería un bug visible en la pantalla.
+      //
+      // Con dos portadas, MAX() elige una sola —la de titular mayor
+      // alfabéticamente— y siempre la misma. Arbitraria, pero estable: la
+      // pantalla no parpadea entre dos titulares según el plan del optimizador.
       const [rows] = await conn.execute<EditionSummaryDB[] & RowDataPacket[]>(
         `SELECT e.editionNumber,
                 DATE_FORMAT(e.publishedOn, '%Y-%m-%d') AS publishedOn,
-                a.headline
+                MAX(CASE WHEN a.section = 'P' THEN a.headline END) AS headline
            FROM NewsletterEditions e
-           LEFT JOIN NewsletterArticles a
-             ON a.editionId = e.editionId AND a.section = 'P'
+           LEFT JOIN NewsletterArticles a ON a.editionId = e.editionId
+          GROUP BY e.editionId, e.editionNumber, e.publishedOn
           ORDER BY e.publishedOn DESC`,
       );
 
@@ -97,13 +114,19 @@ export class NewsletterRepository implements INewsletterRepository {
     // Los jugadores de TODAS las notas en una sola consulta. El JOIN a
     // vPlayerDetail es lo que trae displayName ya resuelto: la regla de
     // "apodo si tiene, nombre completo si no" vive ahí y en ningún otro lado.
+    //
+    // El ORDER BY no es decorativo: el rol de un jugador decide qué foto
+    // ilustra la nota, así que un frontend que agarre `players[0]` está
+    // leyendo un orden. Sin la cláusula ese orden es el de la PK por
+    // accidente, y el accidente puede cambiar con el plan del optimizador.
     const [players] = await conn.execute<ArticlePlayerDB[] & RowDataPacket[]>(
       `SELECT ap.articleId, ap.playerId, ap.role, p.displayName, p.photo
          FROM NewsletterArticlePlayers ap
          INNER JOIN vPlayerDetail p ON p.playerId = ap.playerId
         WHERE ap.articleId IN (
                 SELECT articleId FROM NewsletterArticles WHERE editionId = ?
-              )`,
+              )
+        ORDER BY ap.articleId, ap.playerId`,
       [edition.editionId],
     );
 

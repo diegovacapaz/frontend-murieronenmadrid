@@ -13,7 +13,7 @@ import type { Row } from '../../../database/database.types';
 export interface EditionDB extends Row {
   editionId: number;
   editionNumber: number;
-  publishedOn: string; // ya formateada con DATE_FORMAT
+  publishedOn: string; // ya formateada con DATE_FORMAT; ver la nota de LastEditionDB
   publishedAt: Date;
 }
 
@@ -45,6 +45,17 @@ export interface EditionSummaryDB extends Row {
 export interface LastEditionDB extends Row {
   editionId: number;
   editionNumber: number;
+  /**
+   * SOLO es `string` si la consulta la trae con `DATE_FORMAT(publishedOn,
+   * '%Y-%m-%d')`. El `typeCast` del pool no toca `DATE`, así que un
+   * `SELECT publishedOn` natural devuelve un `Date` mientras TypeScript sigue
+   * diciendo `string` — y `last.publishedOn === hoy` da false para siempre, en
+   * silencio. Es el mismo bug mudo que `isEnabled`, en la otra dirección.
+   *
+   * Ninguna consulta de este módulo produce esta fila todavía: la escribe la
+   * tarea de persistencia, y el tipo es una promesa que esa consulta tiene que
+   * cumplir.
+   */
   publishedOn: string;
   lastMatchId: number;
   snapshotVersion: number;

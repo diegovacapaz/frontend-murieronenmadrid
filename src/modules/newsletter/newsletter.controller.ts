@@ -1,5 +1,5 @@
 import { Controller, Get, Param } from '@nestjs/common';
-import { ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
+import { ApiOkResponse, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { ApiRoute, ApiTag } from '../../common/constants';
 import { ParseIsoDatePipe } from '../../common/pipes/parse-iso-date.pipe';
 import { EditionResponseDto, EditionSummaryDto } from './dto/edition-response.dto';
@@ -29,6 +29,14 @@ export class NewsletterController {
     description:
       'Devuelve `null` —no un 404— cuando el diario todavía no publicó ninguna ' +
       'edición: es el estado inicial del sistema y el frontend dibuja el vacío.',
+  })
+  // El @ApiOkResponse es obligatorio acá y no en los otros dos: el plugin CLI
+  // de Swagger no infiere el tipo de una unión con `null`, y sin esta línea el
+  // `data` del endpoint que más usa el frontend sale como un `object` pelado en
+  // vez de resolver el $ref a EditionResponseDto.
+  @ApiOkResponse({
+    type: EditionResponseDto,
+    description: 'La última edición, o `null` si todavía no hay ediciones.',
   })
   findLatest(): Promise<EditionResponseDto | null> {
     return this.newsletterService.findLatest();
