@@ -2,7 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { DatabaseService } from '../../database/database.service';
 import { Player } from './entities/player.entity';
 import { PlayerFactory } from './helpers/player.factory';
-import { PlayerDB } from './interfaces/database';
+import { PlayerDB, PlayerLoreDB } from './interfaces/database';
 import {
   IPlayersRepository,
   SearchPlayersParams,
@@ -59,5 +59,14 @@ export class PlayersRepository implements IPlayersRepository {
   async remove(playerId: number): Promise<Player> {
     const row = await this.db.callSimple<PlayerDB>('DeletePlayer', [playerId]);
     return PlayerFactory.toObject(row);
+  }
+
+  async findLore(playerId: number): Promise<string> {
+    const row = await this.db.callSimple<PlayerLoreDB>('GetPlayerLore', [playerId]);
+    return row.notes;
+  }
+
+  async saveLore(playerId: number, notes: string): Promise<void> {
+    await this.db.callExec('UpsertPlayerLore', [playerId, notes]);
   }
 }

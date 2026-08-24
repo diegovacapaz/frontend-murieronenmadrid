@@ -20,4 +20,6 @@ export interface IPlayersRepository {
   create(player: Partial<Player>): Promise<Player>;
   update(playerId: number, player: Partial<Player>): Promise<Player>;
   remove(playerId: number): Promise<Player>;
+  findLore(playerId: number): Promise<string>;
+  saveLore(playerId: number, notes: string): Promise<void>;
 }

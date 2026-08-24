@@ -248,3 +248,56 @@ BEGIN
     END IF;
 END //
 DELIMITER ;
+
+-- -----------------------------------------------------------------------------
+-- GetPlayerLore — las notas personales que alimentan al diario
+-- -----------------------------------------------------------------------------
+-- Devuelve siempre una fila: cadena vacia si el jugador no tiene notas. Asi el
+-- formulario de admin no tiene que distinguir "no existe" de "esta vacio", que
+-- para el es lo mismo.
+--
+-- Señaliza 404 si el jugador no existe, porque pedir el lore de alguien que no
+-- esta es un error del cliente, no un lore vacio.
+DROP PROCEDURE IF EXISTS GetPlayerLore;
+
+DELIMITER //
+CREATE PROCEDURE GetPlayerLore(
+    pPlayerId INT
+)
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM Players WHERE playerId = pPlayerId) THEN
+        SIGNAL SQLSTATE '45001' SET MYSQL_ERRNO = 46100,
+            MESSAGE_TEXT = 'El jugador no existe';
+    ELSE
+        SELECT COALESCE(
+            (SELECT notes FROM PlayerLore WHERE playerId = pPlayerId), ''
+        ) AS notes;
+    END IF;
+END //
+DELIMITER ;
+
+-- -----------------------------------------------------------------------------
+-- UpsertPlayerLore — guarda o borra las notas
+-- -----------------------------------------------------------------------------
+-- Notas vacias BORRAN la fila en vez de guardar una cadena vacia. Con eso
+-- "tiene lore" es una sola pregunta —existe la fila o no— y el dossier no
+-- necesita filtrar cadenas vacias antes de armar el prompt.
+DROP PROCEDURE IF EXISTS UpsertPlayerLore;
+
+DELIMITER //
+CREATE PROCEDURE UpsertPlayerLore(
+    pPlayerId INT,
+    pNotes    TEXT
+)
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM Players WHERE playerId = pPlayerId) THEN
+        SIGNAL SQLSTATE '45001' SET MYSQL_ERRNO = 46100,
+            MESSAGE_TEXT = 'El jugador no existe';
+    ELSEIF (pNotes IS NULL) OR (TRIM(pNotes) = '') THEN
+        DELETE FROM PlayerLore WHERE playerId = pPlayerId;
+    ELSE
+        INSERT INTO PlayerLore (playerId, notes) VALUES (pPlayerId, TRIM(pNotes))
+        ON DUPLICATE KEY UPDATE notes = VALUES(notes);
+    END IF;
+END //
+DELIMITER ;
