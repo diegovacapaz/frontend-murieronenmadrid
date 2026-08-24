@@ -51,6 +51,9 @@ export const AppErrorCode = {
 
   // ── Teams ──
   TEAM_NOT_FOUND: 'TEAM_NOT_FOUND',
+
+  // ── Newsletter ──
+  NEWSLETTER_EDITION_NOT_FOUND: 'NEWSLETTER_EDITION_NOT_FOUND',
 } as const;
 
 export type AppErrorCodeValue = (typeof AppErrorCode)[keyof typeof AppErrorCode];

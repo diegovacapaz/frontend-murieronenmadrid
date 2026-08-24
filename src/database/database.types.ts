@@ -1,4 +1,4 @@
-import type { ResultSetHeader, RowDataPacket } from 'mysql2/promise';
+import type { PoolConnection, ResultSetHeader, RowDataPacket } from 'mysql2/promise';
 
 // ─────────────────────────── Parametros de SP ─────────────────────────────────
 
@@ -27,5 +27,9 @@ export type Row = RowDataPacket & Record<string, unknown>;
 /**
  * Re-exports de mysql2 para que ningun archivo fuera de src/database/ importe
  * del driver directamente.
+ *
+ * PoolConnection esta aca por los repositories que usan `withConnection` y
+ * parten la consulta en un helper privado: ese helper necesita tipar la
+ * conexion que recibe.
  */
-export type { ResultSetHeader, RowDataPacket };
+export type { PoolConnection, ResultSetHeader, RowDataPacket };

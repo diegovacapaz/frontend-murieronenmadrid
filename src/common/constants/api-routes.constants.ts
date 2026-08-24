@@ -17,4 +17,5 @@ export enum ApiRoute {
   STATS = 'stats',
   MUNDIALITO = 'mundialito',
   ACHIEVEMENTS = 'achievements',
+  NEWSLETTER = 'newsletter',
 }
