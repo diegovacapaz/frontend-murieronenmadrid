@@ -35,6 +35,8 @@ export interface PlayerStatsSummaryFields {
   winRate: number | null;
   penalty: number;
   netPoints: number;
+  /** Cuantas veces descendio. Viaja en el resumen para la insignia del perfil. */
+  relegations: number;
   debutTournamentId: number | null;
   debutTournamentName: string | null;
 }
@@ -316,6 +318,55 @@ export interface StreakRecordFields {
   isOpen: number;
 }
 
+/** Una fila de la tabla de descensos: quien bajo y cuantas veces. */
+export interface RelegationRankFields {
+  playerId: number;
+  displayName: string;
+  photo: string | null;
+  relegations: number;
+  /** De esos descensos, cuantos fueron con los ocho partidos perdidos. */
+  allLossRelegations: number;
+  firstRelegationAt: Date;
+  lastRelegationAt: Date;
+}
+
+/**
+ * Una carrera al descenso: el bloque de ocho partidos sin ganar dentro de un
+ * tramo. `matches` llega a 8 en las consumadas y se queda corto en las demas.
+ */
+export interface RelegationRunFields {
+  /** Cronologico dentro del jugador, desde 1. Correlaciona con los partidos. */
+  runIndex: number;
+  /** El contador del descenso: partidos sin ganar, de 1 a 8. */
+  matches: number;
+  losses: number;
+  draws: number;
+  startedAt: Date;
+  /** El octavo partido. null si la carrera no llego a descenso. */
+  endedAt: Date | null;
+  /** 1 si llego a los ocho. */
+  isRelegated: number;
+  /** 1 si descendio sin un solo empate: los ocho perdidos. */
+  isAllLosses: number;
+  /** 1 si el tramo sigue vivo y la carrera todavia puede consumarse. */
+  isOpen: number;
+}
+
+/** Un partido de una carrera. El empate cuenta igual que la derrota. */
+export interface RelegationRunMatchFields {
+  runIndex: number;
+  matchId: number;
+  tournamentId: number;
+  tournamentName: string;
+  playedAt: Date;
+  result: MatchResult;
+  /** Con signo desde su punto de vista. Solo para el detalle del partido. */
+  goalsDiference: number;
+  team: Team;
+  /** Su casilla en la carrera, de 1 a 8. La octava es la que la consuma. */
+  posInRace: number;
+}
+
 // ─────────────────────────── Filas crudas ─────────────────────────────────────
 
 export interface PlayerStatsSummaryDB extends Row, PlayerStatsSummaryFields {}
@@ -340,3 +391,6 @@ export interface PlayerActivityDB extends Row, PlayerActivityFields {}
 export interface TournamentRaceEntryDB extends Row, TournamentRaceEntryFields {}
 export interface TournamentAttendanceDB extends Row, TournamentAttendanceFields {}
 export interface StreakRecordDB extends Row, StreakRecordFields {}
+export interface RelegationRankDB extends Row, RelegationRankFields {}
+export interface RelegationRunDB extends Row, RelegationRunFields {}
+export interface RelegationRunMatchDB extends Row, RelegationRunMatchFields {}

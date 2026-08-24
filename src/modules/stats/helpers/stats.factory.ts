@@ -27,6 +27,12 @@ import type {
   RivalStatFields,
   StatHighlightDB,
   StatHighlightFields,
+  RelegationRankDB,
+  RelegationRankFields,
+  RelegationRunDB,
+  RelegationRunFields,
+  RelegationRunMatchDB,
+  RelegationRunMatchFields,
   StreakRecordDB,
   StreakRecordFields,
   TeamDistributionDB,
@@ -78,7 +84,7 @@ const PLAYER_SUMMARY_KEYS = [
   'playerId', 'displayName', 'firstName', 'secondName', 'nickname', 'photo',
   'state', 'isSagrado', 'createdAt', 'cups', 'championships', 'position',
   'tournamentsPlayed', 'played', 'won', 'drew', 'lost', 'goalsDiference',
-  'points', 'maxPoints', 'winRate', 'penalty', 'netPoints',
+  'points', 'maxPoints', 'winRate', 'penalty', 'netPoints', 'relegations',
   'debutTournamentId', 'debutTournamentName',
 ] as const satisfies ReadonlyArray<keyof PlayerStatsSummaryFields>;
 
@@ -184,6 +190,21 @@ const ATTENDANCE_KEYS = [
 const STREAK_RECORD_KEYS = [
   'playerId', 'displayName', 'photo', 'length', 'startedAt', 'endedAt', 'isOpen',
 ] as const satisfies ReadonlyArray<keyof StreakRecordFields>;
+
+const RELEGATION_RANK_KEYS = [
+  'playerId', 'displayName', 'photo', 'relegations', 'allLossRelegations',
+  'firstRelegationAt', 'lastRelegationAt',
+] as const satisfies ReadonlyArray<keyof RelegationRankFields>;
+
+const RELEGATION_RUN_KEYS = [
+  'runIndex', 'matches', 'losses', 'draws', 'startedAt', 'endedAt',
+  'isRelegated', 'isAllLosses', 'isOpen',
+] as const satisfies ReadonlyArray<keyof RelegationRunFields>;
+
+const RELEGATION_RUN_MATCH_KEYS = [
+  'runIndex', 'matchId', 'tournamentId', 'tournamentName',
+  'playedAt', 'result', 'goalsDiference', 'team', 'posInRace',
+] as const satisfies ReadonlyArray<keyof RelegationRunMatchFields>;
 
 export class StatsFactory {
   static playerSummary(db: PlayerStatsSummaryDB): PlayerStatsSummaryFields {
@@ -296,6 +317,18 @@ export class StatsFactory {
 
   static streakRecords(dbs: StreakRecordDB[]): StreakRecordFields[] {
     return projectList(dbs, STREAK_RECORD_KEYS);
+  }
+
+  static relegations(dbs: RelegationRankDB[]): RelegationRankFields[] {
+    return projectList(dbs, RELEGATION_RANK_KEYS);
+  }
+
+  static relegationRuns(dbs: RelegationRunDB[]): RelegationRunFields[] {
+    return projectList(dbs, RELEGATION_RUN_KEYS);
+  }
+
+  static relegationMatches(dbs: RelegationRunMatchDB[]): RelegationRunMatchFields[] {
+    return projectList(dbs, RELEGATION_RUN_MATCH_KEYS);
   }
 
   static records(db: RecordsDB): RecordsFields {

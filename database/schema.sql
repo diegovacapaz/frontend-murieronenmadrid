@@ -177,3 +177,33 @@ CREATE TABLE PlayerPenalties (
 
   CONSTRAINT PlayerPenalties_penalty_check CHECK (penalty > 0)
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_0900_ai_ci;
+
+-- -----------------------------------------------------------------------------
+-- Achievements — catalogo de logros
+-- -----------------------------------------------------------------------------
+-- Catalogo fijo, como Teams: la aplicacion no lo edita. Las filas NO viven aca
+-- sino en database/achievements.sql, que se puede reaplicar solo cuando se
+-- agrega o se corrige un logro sin volver a cargar todo el esquema.
+--
+-- La PK es el code y no un autoincremental porque las reglas de
+-- vPlayerAchievements lo mencionan una por una: 'CAZADOR' se lee, un 7 no.
+--
+-- Ningun logro se guarda por jugador. El estado se deduce del historial cada
+-- vez que se abre la solapa; esta tabla solo aporta los textos y el orden.
+CREATE TABLE Achievements (
+  code        VARCHAR(24)  NOT NULL,
+  category    CHAR(1)      NOT NULL,
+  title       VARCHAR(40)  NOT NULL,
+  description VARCHAR(120) NOT NULL,
+  -- Marca los dos logros que pueden romperse (Mexicano y Eterno Candidato). El
+  -- motor no lo usa —el estado sale de la regla— pero le avisa al frontend que
+  -- esa medalla gris puede terminar agrietada.
+  isBreakable BOOLEAN      NOT NULL DEFAULT FALSE,
+  sortOrder   INT          NOT NULL,
+
+  PRIMARY KEY (code),                                     -- Achievements_primary_key
+  UNIQUE KEY Achievements_sortOrder_unique (sortOrder),
+  KEY Achievements_category_index (category),
+
+  CONSTRAINT Achievements_category_check CHECK (category IN ('G', 'S', 'M'))
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_0900_ai_ci;

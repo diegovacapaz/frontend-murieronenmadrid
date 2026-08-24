@@ -842,12 +842,13 @@ WHERE ranked.rn = 1;
 -- =============================================================================
 
 -- -----------------------------------------------------------------------------
--- vPlayerStreakIslands — cada tramo consecutivo, de los tres tipos
+-- vPlayerStreakIslands — cada tramo consecutivo, de los cuatro tipos
 -- -----------------------------------------------------------------------------
 -- kind:
 --   UNBEATEN  partidos seguidos sin perder
 --   WIN       victorias seguidas
 --   WINLESS   partidos seguidos sin ganar
+--   LOSS      derrotas seguidas
 --
 -- lastN e isOpen son lo que permite saber si la racha sigue viva: una racha
 -- esta abierta si su ultimo partido es el ultimo que jugo esa persona.
@@ -867,7 +868,10 @@ WITH seq AS (
     ) AS nWin,
     ROW_NUMBER() OVER (
       PARTITION BY r.playerId, r.result <> 'W' ORDER BY r.playedAt, r.matchId
-    ) AS nWinless
+    ) AS nWinless,
+    ROW_NUMBER() OVER (
+      PARTITION BY r.playerId, r.result =  'L' ORDER BY r.playedAt, r.matchId
+    ) AS nLoss
   FROM vMatchPlayerResults r
 ),
 totals AS (
@@ -882,6 +886,9 @@ islands AS (
   UNION ALL
   SELECT playerId, 'WINLESS', n - nWinless, n, playedAt
   FROM seq WHERE result <> 'W'
+  UNION ALL
+  SELECT playerId, 'LOSS', n - nLoss, n, playedAt
+  FROM seq WHERE result = 'L'
 )
 SELECT
   i.playerId,
@@ -909,6 +916,7 @@ SELECT
   COALESCE(best.bestWin, 0)          AS bestWin,
   best.bestWinEndedAt,
   COALESCE(best.worstWinless, 0)     AS worstWinless,
+  COALESCE(best.worstLoss, 0)        AS worstLoss,
   COALESCE(open.currentUnbeaten, 0)  AS currentUnbeaten,
   COALESCE(open.currentWinless, 0)   AS currentWinless
 FROM Players p
@@ -918,6 +926,7 @@ LEFT JOIN (
     CAST(MAX(CASE WHEN s.kind = 'UNBEATEN' THEN s.length END) AS SIGNED) AS bestUnbeaten,
     CAST(MAX(CASE WHEN s.kind = 'WIN'      THEN s.length END) AS SIGNED) AS bestWin,
     CAST(MAX(CASE WHEN s.kind = 'WINLESS'  THEN s.length END) AS SIGNED) AS worstWinless,
+    CAST(MAX(CASE WHEN s.kind = 'LOSS'     THEN s.length END) AS SIGNED) AS worstLoss,
     -- La fecha del final de la mejor racha de cada tipo. El SUBSTRING_INDEX
     -- sobre un GROUP_CONCAT ordenado es la forma de traer "el valor de la fila
     -- que tiene el maximo" sin una segunda pasada.
@@ -946,3 +955,802 @@ LEFT JOIN (
   WHERE s.isOpen = 1
   GROUP BY s.playerId
 ) open ON open.playerId = p.playerId;
+
+-- =============================================================================
+-- DESCENSOS
+-- =============================================================================
+-- El castigo del grupo: pasar ocho partidos sin ganar y bajar de categoria.
+--
+-- Lo unico que salva es GANAR. El empate no salva: suma al contador igual que
+-- una derrota. Ocho sin ganar es ocho sin ganar, se hayan perdido todos o se
+-- haya empatado la mitad.
+--
+-- Y el contador no se reinicia al descender: dentro de un mismo tramo, cada
+-- ocho partidos es otro descenso.
+--
+--   L L E L L L L E        -> 8 sin ganar, 1 descenso
+--   L L L L L L L W L L    -> 7 y despues 2: ningun descenso, la victoria corta
+--   16 sin ganar al hilo   -> 2 descensos
+--
+-- De ahi salen los dos conceptos que usa el frontend:
+--   TRAMO    los partidos sin ganar consecutivos (lo corta una victoria)
+--   CARRERA  cada bloque de ocho partidos dentro de un tramo; la ultima puede
+--            quedar incompleta, y esa es "el camino al descenso" en curso
+--
+-- El tramo es exactamente la racha WINLESS de vPlayerStreakIslands: la tabla
+-- "Capitanes Derrota" y los descensos miden LO MISMO, y el descenso es cada
+-- ocho de esos partidos. Aca se recalcula partido por partido porque hace falta
+-- saber en que posicion del tramo cae cada uno, que es lo que reparte los
+-- partidos en carreras y lo que el perfil dibuja.
+--
+-- Igual que las rachas, cuentan TODOS los partidos, incluidos los de torneos
+-- sin detalle: el descenso acompania a la tabla historica, que tambien los
+-- cuenta.
+-- =============================================================================
+
+-- -----------------------------------------------------------------------------
+-- vPlayerWinlessRunMatches — cada partido con su tramo y su carrera
+-- -----------------------------------------------------------------------------
+-- La base de las dos vistas de abajo, y tambien lo que el perfil dibuja partido
+-- por partido. Una fila por aparicion dentro de un tramo sin ganar; las
+-- victorias no estan, son el corte y no forman parte de ningun tramo.
+--
+-- Mismo truco de islas que vPlayerStreakIslands: la resta entre la numeracion
+-- global y la que solo cuenta los partidos sin ganar se mantiene constante
+-- mientras no aparezca una victoria.
+--
+-- posInRun es la posicion del partido DENTRO del tramo, contando desde 1. Su
+-- division entera por 8 reparte el tramo en carreras —los partidos 1 a 8 son la
+-- carrera 0, los 9 a 16 la carrera 1— y el resto da la casilla que se pinta.
+-- Derrotas y empates se numeran igual: los dos acercan al descenso.
+CREATE OR REPLACE VIEW vPlayerWinlessRunMatches AS
+WITH seq AS (
+  SELECT
+    r.playerId,
+    r.matchId,
+    r.tournamentId,
+    r.playedAt,
+    r.result,
+    r.goalsDiference,
+    r.team,
+    ROW_NUMBER() OVER (PARTITION BY r.playerId ORDER BY r.playedAt, r.matchId) AS n,
+    ROW_NUMBER() OVER (
+      PARTITION BY r.playerId, r.result <> 'W' ORDER BY r.playedAt, r.matchId
+    ) AS nWinless
+  FROM vMatchPlayerResults r
+),
+runs AS (
+  SELECT
+    s.playerId,
+    s.matchId,
+    s.tournamentId,
+    s.playedAt,
+    s.result,
+    s.goalsDiference,
+    s.team,
+    s.n - s.nWinless AS runId,
+    ROW_NUMBER() OVER (
+      PARTITION BY s.playerId, s.n - s.nWinless ORDER BY s.playedAt, s.matchId
+    ) AS posInRun
+  FROM seq s
+  WHERE s.result <> 'W'
+)
+SELECT
+  r.playerId,
+  r.runId,
+  r.matchId,
+  r.tournamentId,
+  r.playedAt,
+  r.result,
+  -- Los dos datos que solo usa el detalle de cada partido en el perfil. No
+  -- entran en ningun calculo del descenso: viajan para que el globo del camino
+  -- pueda decir por cuanto y con quien, igual que el del mundialito.
+  r.goalsDiference,
+  r.team,
+  CAST(r.posInRun AS SIGNED)                       AS posInRun,
+  CAST(FLOOR((r.posInRun - 1) / 8) AS SIGNED)      AS raceNo,
+  -- La casilla de la carrera, de 1 a 8. Es lo que se pinta en el camino al
+  -- descenso: la octava es la que lo consuma.
+  CAST(((r.posInRun - 1) % 8) + 1 AS SIGNED)       AS posInRace
+FROM runs r;
+
+-- -----------------------------------------------------------------------------
+-- vPlayerRelegationRuns — una fila por carrera al descenso
+-- -----------------------------------------------------------------------------
+-- Las completas son descensos consumados; la ultima de un tramo abierto es la
+-- que esta en curso. Una carrera incompleta de un tramo YA CERRADO es una que
+-- se salvo: la victoria llego antes del octavo partido.
+--
+-- startedAt y endedAt son el primero y el ultimo partido de la carrera; endedAt
+-- es la fecha del descenso cuando la carrera esta completa.
+--
+-- isOpen distingue "todavia puede terminar en descenso" de "quedo ahi": es 1
+-- solo si el tramo sigue vivo —su ultimo partido es el ultimo que jugo esa
+-- persona— y a la carrera le faltan partidos.
+--
+-- losses viaja al lado de matches porque hay un logro que los compara: descender
+-- con los ocho perdidos, sin un solo empate que amortigue.
+CREATE OR REPLACE VIEW vPlayerRelegationRuns AS
+WITH lastPlayed AS (
+  SELECT playerId, MAX(playedAt) AS lastPlayedAt
+  FROM vMatchPlayerResults
+  GROUP BY playerId
+),
+races AS (
+  SELECT
+    m.playerId,
+    m.runId,
+    m.raceNo,
+    CAST(COUNT(*)                AS SIGNED) AS matches,
+    CAST(SUM(m.result = 'L')     AS SIGNED) AS losses,
+    CAST(SUM(m.result = 'D')     AS SIGNED) AS draws,
+    MIN(m.playedAt)                         AS startedAt,
+    MAX(m.playedAt)                         AS lastMatchAt
+  FROM vPlayerWinlessRunMatches m
+  GROUP BY m.playerId, m.runId, m.raceNo
+)
+SELECT
+  r.playerId,
+  r.runId,
+  r.raceNo,
+  -- Un identificador estable de la carrera dentro del jugador, para que el
+  -- frontend correlacione la fila con sus partidos sin componer dos columnas.
+  -- Cronologico: la carrera 1 es la primera de su vida.
+  CAST(ROW_NUMBER() OVER (
+    PARTITION BY r.playerId ORDER BY r.runId, r.raceNo
+  ) AS SIGNED)                            AS runIndex,
+  r.matches,
+  r.losses,
+  r.draws,
+  r.startedAt,
+  -- La fecha del descenso. NULL mientras la carrera no este completa: una
+  -- carrera a medias no tiene final, esta esperando o se salvo.
+  CASE WHEN r.matches >= 8 THEN r.lastMatchAt END AS endedAt,
+  r.lastMatchAt,
+  CAST(r.matches >= 8 AS SIGNED)          AS isRelegated,
+  -- Descendio perdiendolos todos: ni un empate en las ocho fechas.
+  CAST(r.matches >= 8 AND r.losses = r.matches AS SIGNED) AS isAllLosses,
+  CAST(r.lastMatchAt = lp.lastPlayedAt AND r.matches < 8 AS SIGNED) AS isOpen
+FROM races r
+INNER JOIN lastPlayed lp ON lp.playerId = r.playerId;
+
+-- -----------------------------------------------------------------------------
+-- vPlayerRelegations — cuantas veces descendio cada jugador
+-- -----------------------------------------------------------------------------
+-- El resumen que consumen la tabla de descensos, la insignia del perfil y los
+-- dos logros. Estan TODOS los jugadores, con cero los que nunca bajaron: los
+-- logros necesitan la fila para poder mostrarse en gris.
+--
+-- worstRaceMatches es lo mas cerca que estuvo del descenso: 8 si bajo, y si no,
+-- el maximo que alcanzo alguna carrera. Es el progreso de la medalla.
+CREATE OR REPLACE VIEW vPlayerRelegations AS
+SELECT
+  p.playerId,
+  COALESCE(r.relegations, 0)        AS relegations,
+  COALESCE(r.allLossRelegations, 0) AS allLossRelegations,
+  COALESCE(r.worstRaceMatches, 0)   AS worstRaceMatches,
+  r.firstRelegationAt,
+  r.lastRelegationAt
+FROM Players p
+LEFT JOIN (
+  SELECT
+    playerId,
+    CAST(SUM(isRelegated) AS SIGNED) AS relegations,
+    CAST(SUM(isAllLosses) AS SIGNED) AS allLossRelegations,
+    CAST(MAX(matches)     AS SIGNED) AS worstRaceMatches,
+    MIN(endedAt)                     AS firstRelegationAt,
+    MAX(endedAt)                     AS lastRelegationAt
+  FROM vPlayerRelegationRuns
+  GROUP BY playerId
+) r ON r.playerId = p.playerId;
+
+-- =============================================================================
+-- ASISTENCIA
+-- =============================================================================
+-- La base guarda quien jugo, nunca quien falto. La ausencia hay que deducirla:
+-- hubo partido, vos no estabas.
+--
+-- Apoya en un supuesto del grupo: cuando se juega, juegan todos los que fueron,
+-- repartidos en los dos equipos. Por eso no figurar en la convocatoria es haber
+-- faltado. Hay un partido cargado con una sola formacion, y ahi medio plantel
+-- figura como ausente: es un dato incompleto conocido.
+--
+-- Se excluyen los torneos wasTracked = FALSE. De esos solo sobrevivio la tabla
+-- y sus partidos son reconstrucciones: contarlos inventaria ausencias que nadie
+-- tuvo.
+-- =============================================================================
+
+-- -----------------------------------------------------------------------------
+-- vPlayerAttendance — presente o ausente en cada partido, desde el debut
+-- -----------------------------------------------------------------------------
+-- La ventana de cada jugador arranca en su primer partido y llega hasta hoy: el
+-- que se fue del grupo sigue acumulando ausencias, que es justamente el chiste
+-- de "Se busca!".
+CREATE OR REPLACE VIEW vPlayerAttendance AS
+WITH tracked AS (
+  SELECT m.matchId, m.playedAt
+  FROM Matches m
+  INNER JOIN Tournaments t ON t.tournamentId = m.tournamentId
+  WHERE t.wasTracked = TRUE
+),
+debut AS (
+  SELECT mp.playerId, MIN(tr.playedAt) AS debutAt
+  FROM MatchPlayers mp
+  INNER JOIN tracked tr ON tr.matchId = mp.matchId
+  GROUP BY mp.playerId
+)
+SELECT
+  d.playerId,
+  tr.matchId,
+  tr.playedAt,
+  CAST(mp.playerId IS NOT NULL AS SIGNED) AS present,
+  CAST(ROW_NUMBER() OVER (
+    PARTITION BY d.playerId ORDER BY tr.playedAt, tr.matchId
+  ) AS SIGNED) AS n
+FROM debut d
+INNER JOIN tracked tr
+  ON tr.playedAt >= d.debutAt
+LEFT JOIN MatchPlayers mp
+  ON mp.matchId  = tr.matchId
+ AND mp.playerId = d.playerId;
+
+-- -----------------------------------------------------------------------------
+-- vPlayerAttendanceStreaks — la racha mas larga de cada tipo
+-- -----------------------------------------------------------------------------
+-- Mismo truco de islas que vPlayerStreakIslands: la diferencia entre la
+-- numeracion global y la numeracion dentro del tipo se mantiene constante
+-- mientras la racha no se corta, asi que agrupar por esa diferencia da los
+-- tramos.
+CREATE OR REPLACE VIEW vPlayerAttendanceStreaks AS
+SELECT
+  i.playerId,
+  CAST(COALESCE(MAX(CASE WHEN i.present = 1 THEN i.length END), 0) AS SIGNED) AS bestAttendanceStreak,
+  CAST(COALESCE(MAX(CASE WHEN i.present = 0 THEN i.length END), 0) AS SIGNED) AS bestAbsenceStreak
+FROM (
+  SELECT marked.playerId, marked.present, COUNT(*) AS length
+  FROM (
+    SELECT
+      a.playerId,
+      a.present,
+      a.n - ROW_NUMBER() OVER (
+        PARTITION BY a.playerId, a.present ORDER BY a.n
+      ) AS island
+    FROM vPlayerAttendance a
+  ) marked
+  GROUP BY marked.playerId, marked.present, marked.island
+) i
+GROUP BY i.playerId;
+
+-- =============================================================================
+-- POSICIONES FECHA A FECHA
+-- =============================================================================
+-- La tabla de un torneo despues de cada fecha, no solo al final. La necesitan
+-- los dos logros que miran el tramo final de un torneo, que son uno el espejo
+-- del otro: Pechofrio (liderar las tres fechas previas a la ultima y perderlo)
+-- y Puro Huevo (no liderar ninguna de esas tres y darla vuelta en la ultima).
+--
+-- Una fecha es cada partido del torneo: en este grupo se juega un partido por
+-- dia y van todos los que van.
+--
+-- La penalizacion se resta completa desde la primera fecha. PlayerPenalties no
+-- guarda cuando se aplico, asi que repartirla en el tiempo seria inventar un
+-- dato; restarla entera tiene ademas la ventaja de que la ultima fecha coincide
+-- exactamente con vTournamentStandings. El costo asumido es que un penalizado
+-- aparece castigado desde el principio.
+-- =============================================================================
+
+-- -----------------------------------------------------------------------------
+-- vTournamentMatchdays — las fechas de cada torneo, numeradas
+-- -----------------------------------------------------------------------------
+-- matchdays (el total) viaja en cada fila para que "es la ultima fecha" se
+-- pueda preguntar sin un segundo join.
+CREATE OR REPLACE VIEW vTournamentMatchdays AS
+SELECT
+  m.tournamentId,
+  m.matchId,
+  m.playedAt,
+  CAST(ROW_NUMBER() OVER (
+    PARTITION BY m.tournamentId ORDER BY m.playedAt, m.matchId
+  ) AS SIGNED) AS matchday,
+  CAST(COUNT(*) OVER (PARTITION BY m.tournamentId) AS SIGNED) AS matchdays
+FROM Matches m;
+
+-- -----------------------------------------------------------------------------
+-- vTournamentMatchdayStandings — la tabla acumulada tras cada fecha
+-- -----------------------------------------------------------------------------
+-- Cada jugador del torneo aparece en TODAS las fechas, haya jugado esa o no:
+-- el que falta no desaparece de la tabla, se queda con los puntos que tenia.
+-- Por eso el cruce entre las fechas y el plantel del torneo antes del LEFT JOIN
+-- contra los resultados.
+--
+-- OJO con el CASE de puntos: no alcanza con hacer CASE played.result, porque
+-- cuando el LEFT JOIN no encuentra partido (todavia no debuto para esta fecha)
+-- played.result es NULL, y un CASE simple sobre NULL no matchea ni 'W' ni 'D'
+-- y cae en el ELSE. Sin el WHEN explicito de played.matchId IS NULL, "no jugo
+-- todavia" se contaba como derrota y sumaba lossingPoints de regalo.
+--
+-- El join es triangular (cada fecha suma todos los partidos anteriores o igual)
+-- y con quince fechas y quince jugadores eso son un par de miles de filas por
+-- torneo: no hace falta nada mas astuto.
+CREATE OR REPLACE VIEW vTournamentMatchdayStandings AS
+SELECT
+  b.tournamentId,
+  b.matchday,
+  b.matchdays,
+  b.playerId,
+  b.points,
+  b.goalsDiference,
+  b.netPoints,
+  b.winRate,
+  CAST(ROW_NUMBER() OVER (
+    PARTITION BY b.tournamentId, b.matchday
+    ORDER BY b.netPoints DESC, b.goalsDiference DESC, b.winRate DESC, b.playerId ASC
+  ) AS SIGNED) AS `position`
+FROM (
+  SELECT
+    grid.tournamentId,
+    grid.matchday,
+    grid.matchdays,
+    grid.playerId,
+    COALESCE(SUM(
+      CASE
+        WHEN played.matchId IS NULL THEN 0
+        WHEN played.result = 'W'    THEN t.winningPoints
+        WHEN played.result = 'D'    THEN t.drawingPoints
+        ELSE                             t.lossingPoints
+      END), 0)                                              AS points,
+    CAST(COALESCE(SUM(played.goalsDiference), 0) AS SIGNED) AS goalsDiference,
+    COALESCE(SUM(
+      CASE
+        WHEN played.matchId IS NULL THEN 0
+        WHEN played.result = 'W'    THEN t.winningPoints
+        WHEN played.result = 'D'    THEN t.drawingPoints
+        ELSE                             t.lossingPoints
+      END), 0) - COALESCE(pp.penalty, 0)                    AS netPoints,
+    CASE WHEN COUNT(played.matchId) > 0
+         THEN COALESCE(SUM(
+                CASE
+                  WHEN played.matchId IS NULL THEN 0
+                  WHEN played.result = 'W'    THEN t.winningPoints
+                  WHEN played.result = 'D'    THEN t.drawingPoints
+                  ELSE                             t.lossingPoints
+                END), 0) / (t.winningPoints * COUNT(played.matchId))
+    END                                                     AS winRate
+  FROM (
+    SELECT md.tournamentId, md.matchday, md.matchdays, md.playedAt, md.matchId, ro.playerId
+    FROM vTournamentMatchdays md
+    INNER JOIN (
+      SELECT DISTINCT tournamentId, playerId FROM MatchPlayers
+    ) ro ON ro.tournamentId = md.tournamentId
+  ) grid
+  INNER JOIN Tournaments t
+    ON t.tournamentId = grid.tournamentId
+  LEFT JOIN PlayerPenalties pp
+    ON pp.tournamentId = grid.tournamentId
+   AND pp.playerId     = grid.playerId
+  LEFT JOIN (
+    SELECT r.playerId, r.matchId, r.result, r.goalsDiference, md.tournamentId, md.matchday
+    FROM vMatchPlayerResults r
+    INNER JOIN vTournamentMatchdays md ON md.matchId = r.matchId
+  ) played
+    ON played.tournamentId = grid.tournamentId
+   AND played.playerId     = grid.playerId
+   AND played.matchday    <= grid.matchday
+  GROUP BY grid.tournamentId, grid.matchday, grid.matchdays, grid.playerId,
+           t.winningPoints, pp.penalty
+) b;
+
+-- -----------------------------------------------------------------------------
+-- vPlayerGoalDiffPeaks — hasta donde llego la diferencia acumulada
+-- -----------------------------------------------------------------------------
+-- La diferencia de gol de un jugador sube y baja toda la vida. Un logro que
+-- dijera "tene +50 hoy" se prenderia y se apagaria; lo que se guarda aca es el
+-- punto mas alto y el mas bajo que toco la cuenta en toda su carrera, y eso
+-- solo puede crecer.
+--
+-- GREATEST y LEAST contra 0 evitan el caso raro del que siempre estuvo en
+-- negativo: su "pico" es 0, no su mejor momento negativo.
+CREATE OR REPLACE VIEW vPlayerGoalDiffPeaks AS
+SELECT
+  s.playerId,
+  CAST(GREATEST(MAX(s.running), 0) AS SIGNED) AS peakGoalDiff,
+  CAST(LEAST(MIN(s.running), 0)    AS SIGNED) AS floorGoalDiff
+FROM (
+  SELECT
+    r.playerId,
+    SUM(r.goalsDiference) OVER (
+      PARTITION BY r.playerId
+      ORDER BY r.playedAt, r.matchId
+      ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+    ) AS running
+  FROM vMatchPlayerResults r
+) s
+GROUP BY s.playerId;
+
+-- =============================================================================
+-- LOGROS
+-- =============================================================================
+-- Los logros no se guardan: se deducen del historial cada vez que alguien abre
+-- la solapa. La regla "una vez obtenido, nunca se vuelve atras" se cumple sola
+-- porque cada condicion esta escrita como hecho historico —"alguna vez paso
+-- X"— y el historial nunca se achica.
+--
+-- Las dos unicas excepciones son Mexicano y Eterno Candidato: son maldiciones,
+-- y se rompen cuando el jugador mejora. Ese estado tiene su propio valor ('B').
+-- =============================================================================
+
+-- -----------------------------------------------------------------------------
+-- vPlayerAchievementFacts — los numeros crudos que miran las reglas
+-- -----------------------------------------------------------------------------
+-- Una fila por jugador, con TODOS los jugadores: el que no jugo nunca aparece
+-- con ceros, para que su solapa abra igual con las 30 en gris.
+--
+-- Cada LEFT JOIN resuelve una familia de hechos. Ninguno aplica umbrales: eso
+-- es trabajo de vPlayerAchievements. Aca solo se cuenta.
+--
+-- Sobre el torneo 2024 (wasTracked = FALSE): sus cinco partidos son sinteticos
+-- y tienen diferencia de gol 0, asi que no disparan ninguna goleada. Las rachas
+-- si los cuentan, porque salen de vPlayerStreaks, que es el mismo numero que el
+-- perfil ya publica: si el perfil dice "mejor racha 11", la medalla de 10 no
+-- puede estar en gris. La asistencia y el mundialito los excluyen por su cuenta.
+CREATE OR REPLACE VIEW vPlayerAchievementFacts AS
+SELECT
+  p.playerId,
+
+  -- Partidos sueltos
+  COALESCE(mar.maxWinMargin, 0)          AS maxWinMargin,
+  COALESCE(mar.maxLossMargin, 0)         AS maxLossMargin,
+
+  -- Superclasicos
+  COALESCE(der.derbiesPlayed, 0)         AS derbiesPlayed,
+  COALESCE(der.maxDerbyWinMargin, 0)     AS maxDerbyWinMargin,
+  COALESCE(der.maxDerbyLossMargin, 0)    AS maxDerbyLossMargin,
+
+  -- Posiciones en torneos finalizados
+  COALESCE(pos.championships, 0)         AS championships,
+  COALESCE(pos.runnerUps, 0)             AS runnerUps,
+  COALESCE(pos.bottomTwo, 0)             AS bottomTwo,
+  COALESCE(pos.thirdFromBottom, 0)       AS thirdFromBottom,
+
+  -- Acumulados de la tabla historica
+  COALESCE(gen.played, 0)                AS played,
+  COALESCE(gen.drew, 0)                  AS draws,
+  COALESCE(gen.points, 0)                AS points,
+
+  -- Rachas y picos
+  COALESCE(str.bestWin, 0)               AS bestWinStreak,
+  COALESCE(str.worstLoss, 0)             AS worstLossStreak,
+  COALESCE(pk.peakGoalDiff, 0)           AS peakGoalDiff,
+  COALESCE(pk.floorGoalDiff, 0)          AS floorGoalDiff,
+  COALESCE(att.bestAttendanceStreak, 0)  AS bestAttendanceStreak,
+  COALESCE(att.bestAbsenceStreak, 0)     AS bestAbsenceStreak,
+
+  -- Descensos. worstRaceMatches es lo mas cerca que estuvo de bajar: alimenta
+  -- la barra de la medalla, que se llena aunque nunca haya descendido.
+  COALESCE(rel.relegations, 0)           AS relegations,
+  COALESCE(rel.allLossRelegations, 0)    AS allLossRelegations,
+  COALESCE(rel.worstRaceMatches, 0)      AS worstRelegationMatches,
+
+  -- Liderazgos fecha a fecha
+  COALESCE(chk.chokedRuns, 0)            AS chokedRuns,
+  COALESCE(cmb.comebackTitles, 0)        AS comebackTitles,
+
+  -- Mundialito
+  COALESCE(mst.titles, 0)                AS mundialitoTitles,
+  COALESCE(mst.perfectRuns, 0)           AS perfectRuns,
+  COALESCE(mst.semis, 0)                 AS semiRuns,
+  COALESCE(mst.bestSlot, 0)              AS bestSlot,
+  COALESCE(mrun.unbeatenTitles, 0)       AS unbeatenTitles,
+  COALESCE(mrun.shortRuns, 0)            AS shortRuns,
+  COALESCE(mrun.groupZeroRuns, 0)        AS groupZeroRuns,
+  COALESCE(fin.maxFinalWinMargin, 0)     AS maxFinalWinMargin,
+  COALESCE(fin.maxFinalLossMargin, 0)    AS maxFinalLossMargin
+FROM Players p
+
+-- La goleada mas grande a favor y en contra. maxLossMargin va en positivo: es
+-- una magnitud, y asi el umbral del logro se lee igual que el del otro.
+LEFT JOIN (
+  SELECT
+    r.playerId,
+    CAST(GREATEST(MAX(r.goalsDiference), 0)  AS SIGNED) AS maxWinMargin,
+    CAST(GREATEST(-MIN(r.goalsDiference), 0) AS SIGNED) AS maxLossMargin
+  FROM vMatchPlayerResults r
+  GROUP BY r.playerId
+) mar ON mar.playerId = p.playerId
+
+LEFT JOIN (
+  SELECT
+    r.playerId,
+    CAST(COUNT(*)                            AS SIGNED) AS derbiesPlayed,
+    CAST(GREATEST(MAX(r.goalsDiference), 0)  AS SIGNED) AS maxDerbyWinMargin,
+    CAST(GREATEST(-MIN(r.goalsDiference), 0) AS SIGNED) AS maxDerbyLossMargin
+  FROM vMatchPlayerResults r
+  WHERE r.isDerby = TRUE
+  GROUP BY r.playerId
+) der ON der.playerId = p.playerId
+
+-- Ultimo, penultimo y antepenultimo necesitan saber cuantos jugaron el torneo.
+-- El minimo de cinco evita repartir un descenso en un torneo de tres.
+LEFT JOIN (
+  SELECT
+    st.playerId,
+    CAST(SUM(st.`position` = 1) AS SIGNED) AS championships,
+    CAST(SUM(st.`position` = 2) AS SIGNED) AS runnerUps,
+    CAST(SUM(cnt.players >= 5 AND st.`position` >= cnt.players - 1) AS SIGNED) AS bottomTwo,
+    CAST(SUM(cnt.players >= 5 AND st.`position`  = cnt.players - 2) AS SIGNED) AS thirdFromBottom
+  FROM vTournamentStandings st
+  INNER JOIN Tournaments t
+    ON t.tournamentId = st.tournamentId
+   AND t.state        = 'F'
+  INNER JOIN (
+    SELECT tournamentId, CAST(COUNT(*) AS SIGNED) AS players
+    FROM vTournamentStandings
+    GROUP BY tournamentId
+  ) cnt ON cnt.tournamentId = st.tournamentId
+  GROUP BY st.playerId
+) pos ON pos.playerId = p.playerId
+
+-- Puntos BRUTOS, no netos: los netos bajan cuando llega una penalizacion y
+-- Coleccionista dejaria de ser un logro historico.
+--
+-- points es el unico hecho que NO va casteado a SIGNED: la puntuacion del
+-- torneo es DOUBLE y la Clausura paga 0.25 por perder, asi que el cast se
+-- comeria los cuartos de punto.
+LEFT JOIN vGeneralScoreboard gen ON gen.playerId = p.playerId
+
+LEFT JOIN vPlayerStreaks       str ON str.playerId = p.playerId
+LEFT JOIN vPlayerGoalDiffPeaks pk  ON pk.playerId  = p.playerId
+LEFT JOIN vPlayerAttendanceStreaks att ON att.playerId = p.playerId
+
+-- Descensos. La vista ya trae a todos los jugadores con cero, asi que el JOIN
+-- podria ser INNER; queda LEFT para que agregar una fila a Players no dependa
+-- de que la otra vista la tenga.
+LEFT JOIN vPlayerRelegations   rel ON rel.playerId = p.playerId
+
+-- Pechofrio: la antitesis exacta de Puro Huevo. Misma ventana —las tres fechas
+-- previas a la ultima— y el mismo torneo puede repartir los dos logros, uno a
+-- cada jugador: el que lidero toda la ventana y la perdio, y el que no lidero
+-- ninguna y dio la vuelta. Lo unico que cambia es el cuantificador: alla
+-- ninguna, aca todas.
+--
+-- La ventana se arma con las dos condiciones de matchday y el tamanio sale del
+-- COUNT: la grilla de vTournamentMatchdayStandings trae a TODOS los jugadores
+-- del torneo en TODAS las fechas, asi que contar las filas del jugador dentro
+-- de la ventana da cuantas fechas tiene la ventana. En un torneo de una sola
+-- fecha no entra ninguna fila y el grupo directamente no existe: ahi no hay
+-- ventana que liderar.
+LEFT JOIN (
+  SELECT w.playerId, CAST(SUM(w.ledInWindow = w.windowSize) AS SIGNED) AS chokedRuns
+  FROM (
+    SELECT
+      ms.tournamentId,
+      ms.playerId,
+      CAST(SUM(ms.`position` = 1) AS SIGNED) AS ledInWindow,
+      CAST(COUNT(*)                AS SIGNED) AS windowSize
+    FROM vTournamentMatchdayStandings ms
+    WHERE ms.matchday <  ms.matchdays
+      AND ms.matchday >  ms.matchdays - 4
+    GROUP BY ms.tournamentId, ms.playerId
+  ) w
+  INNER JOIN Tournaments t
+    ON t.tournamentId = w.tournamentId
+   AND t.state        = 'F'
+  -- El que gano el torneo no lo choreo: para el, liderar la ventana es lo
+  -- normal, no un papelon.
+  LEFT JOIN vTournamentChampions c
+    ON c.tournamentId = w.tournamentId
+   AND c.playerId     = w.playerId
+  WHERE c.playerId IS NULL
+  GROUP BY w.playerId
+) chk ON chk.playerId = p.playerId
+
+-- Puro Huevo: torneos ganados llegando de atras. No alcanza con salir campeon:
+-- en las TRES fechas previas a la ultima el campeon no tiene que haber estado
+-- primero ni una vez, y recien en la ultima pasa al frente para dar la vuelta.
+-- Lo que pase antes de esa ventana no importa: se puede haber liderado media
+-- temporada, perdido la punta y recuperado sobre el final.
+--
+-- La pregunta se responde con un solo numero: cual fue la ULTIMA fecha, sin
+-- contar la final, en la que el campeon aparecio primero. Si no lidero nunca
+-- antes ese numero es NULL, y si lidero, tiene que quedar por debajo de la
+-- ventana. Sacar ese numero afuera —en vez de esconder la regla en un NOT
+-- EXISTS correlacionado— deja el hecho reducido a una comparacion entre dos
+-- enteros que el verificador puede comparar por separado.
+--
+-- El minimo de dos fechas descarta el torneo de una sola: ahi no hay ninguna
+-- fecha anterior a la ultima, la ventana queda vacia y el campeon se llevaria
+-- una remontada que nunca remonto nada.
+--
+-- El INNER JOIN alcanza: el campeon lidera al menos la ultima fecha, siempre,
+-- porque la ultima fecha de la tabla acumulada ES la tabla final del torneo.
+LEFT JOIN (
+  SELECT
+    c.playerId,
+    CAST(SUM(fl.matchdays >= 2
+             AND (fl.lastLeadBeforeFinal IS NULL
+                  OR fl.lastLeadBeforeFinal < fl.matchdays - 3)) AS SIGNED) AS comebackTitles
+  FROM vTournamentChampions c
+  INNER JOIN (
+    SELECT
+      ms.tournamentId,
+      ms.playerId,
+      MAX(CASE WHEN ms.matchday < ms.matchdays THEN ms.matchday END) AS lastLeadBeforeFinal,
+      MAX(ms.matchdays)                                             AS matchdays
+    FROM vTournamentMatchdayStandings ms
+    WHERE ms.`position` = 1
+    GROUP BY ms.tournamentId, ms.playerId
+  ) fl
+    ON fl.tournamentId = c.tournamentId
+   AND fl.playerId     = c.playerId
+  GROUP BY c.playerId
+) cmb ON cmb.playerId = p.playerId
+
+LEFT JOIN vMundialitoPlayerStats mst ON mst.playerId = p.playerId
+
+-- Tres hechos que se miran por corrida entera y no por partido.
+LEFT JOIN (
+  SELECT
+    run.playerId,
+    CAST(SUM(run.isUnbeatenTitle) AS SIGNED) AS unbeatenTitles,
+    CAST(SUM(run.isShort)         AS SIGNED) AS shortRuns,
+    CAST(SUM(run.isGroupZero)     AS SIGNED) AS groupZeroRuns
+  FROM (
+    SELECT
+      r.playerId,
+      r.runIndex,
+      -- Campeon sin perder ninguno de los ocho. Se puede dar la vuelta habiendo
+      -- perdido en la fase de grupos, asi que invicto es un escalon mas.
+      (MAX(r.outcome = 'CHAMPION') = 1 AND SUM(r.result = 'L') = 0) AS isUnbeatenTitle,
+      -- Corrida TERMINADA que nunca llego a CUARTOS. Los puestos son 1 a 3
+      -- grupos, 4 16avos, 5 8avos, 6 cuartos, 7 semis y 8 la final: llegar a
+      -- cuartos es jugar el sexto partido, asi que la corrida corta es la que
+      -- muere en el quinto o antes. Perder los 8avos sigue contando.
+      (MAX(r.outcome <> 'ALIVE') = 1 AND MAX(r.slot) <= 5)          AS isShort,
+      -- Eliminado en grupos sin sumar un punto. Es lo que reemplaza al
+      -- "perdiste los 3 de grupos" original, que no puede pasar: con dos
+      -- derrotas la corrida se corta en el segundo partido.
+      (MAX(r.outcome = 'OUT') = 1 AND MAX(r.slot) <= 3
+                                  AND MAX(r.groupPoints) = 0)       AS isGroupZero
+    FROM vMundialitoRuns r
+    GROUP BY r.playerId, r.runIndex
+  ) run
+  GROUP BY run.playerId
+) mrun ON mrun.playerId = p.playerId
+
+-- Las finales, con la diferencia de gol que trae vMatchPlayerResults: el CTE
+-- del mundialito no la lleva.
+LEFT JOIN (
+  SELECT
+    r.playerId,
+    CAST(COALESCE(MAX(CASE WHEN r.result = 'W' THEN  m.goalsDiference END), 0) AS SIGNED) AS maxFinalWinMargin,
+    CAST(COALESCE(MAX(CASE WHEN r.result = 'L' THEN -m.goalsDiference END), 0) AS SIGNED) AS maxFinalLossMargin
+  FROM vMundialitoRuns r
+  INNER JOIN vMatchPlayerResults m
+    ON m.playerId = r.playerId
+   AND m.matchId  = r.matchId
+  WHERE r.slot = 8
+  GROUP BY r.playerId
+) fin ON fin.playerId = p.playerId;
+
+-- -----------------------------------------------------------------------------
+-- vPlayerAchievements — el estado de cada logro, para cada jugador
+-- -----------------------------------------------------------------------------
+-- Una regla por renglon, todas con la misma forma: leer un hecho, compararlo con
+-- un umbral y devolver el estado. Agregar un logro que use hechos que ya estan
+-- calculados es agregar un renglon.
+--
+-- POR QUE LATERAL Y NO 28 UNION ALL: la version anterior repetia
+-- `FROM vPlayerAchievementFacts` en cada una de las 28 ramas, y eso hacia que
+-- los hechos se calcularan 28 veces. Leer la vista entera costaba 3,8s contra
+-- los 0,13s que cuesta un solo pase por los hechos —3,8 dividido 28 da 0,13, la
+-- cuenta cerraba exacta— y filtrar por un jugador no ayudaba en nada, porque el
+-- filtro llega despues de las 28 evaluaciones.
+--
+-- Con LATERAL los hechos se escanean UNA sola vez y por cada fila se despliegan
+-- los 30 logros. El UNION ALL de adentro no toca ninguna tabla: son 30 filas
+-- constantes armadas con las columnas de f, y el plan las muestra como "Rows
+-- fetched before execution", sin materializar nada. La vista entera pasa a
+-- costar 0,13s, lo mismo que los hechos solos, y filtrada por un jugador
+-- tambien. La propiedad de un renglon por regla se conserva, que era el punto.
+--
+-- EL CAST A CHAR(24) FIJA EL CONTRATO, NO EVITA UN TRUNCAMIENTO: en un UNION
+-- ALL no recursivo (como este) MySQL toma el ancho de la rama MAS LARGA de
+-- TODAS, asi que sin el CAST 'BUSCATE_UN_LABURO' hubiera ensanchado la columna
+-- a 17 sola, sin perder nada. El que si trunca es otro caso: una CTE
+-- RECURSIVA, donde el ancho lo fija solo la rama no recursiva del ancla -eso
+-- es lo que le paso a 'CHAMPION' en vMundialitoRuns-. El CAST igual conviene:
+-- es un piso, no un techo (si el dia de manana una rama trae un code de 30
+-- caracteres, la columna se ensancha a 30 sola), y deja el contrato de salida
+-- explicito en vez de heredado de cual rama se haya escrito primero.
+--
+-- progress / target son NULL en los logros de evento -salir campeon no tiene
+-- media medalla- y el frontend no les dibuja barra.
+--
+-- Estados: 'U' obtenido, 'L' bloqueado, 'B' roto.
+--
+-- Nota MySQL 8.4 (bugs.mysql.com/112704): repetir `FROM vPlayerAchievementFacts`
+-- en 28 ramas separadas disparaba un bug del motor TempTable ("Table
+-- './tmp/#sql...' doesn't exist"). LATERAL ya no lo dispara porque evalua los
+-- hechos una sola vez; si esta vista vuelve a escribirse repitiendo esa
+-- evaluacion por rama, puede reaparecer.
+CREATE OR REPLACE VIEW vPlayerAchievements AS
+SELECT f.playerId, r.code, r.state, r.progress, r.target
+FROM vPlayerAchievementFacts f,
+LATERAL (
+  SELECT CAST('CAZADOR' AS CHAR(24)) AS code,
+         CASE WHEN f.maxWinMargin >= 10 THEN 'U' ELSE 'L' END AS state,
+         CAST(f.maxWinMargin AS SIGNED) AS progress, CAST(10 AS SIGNED) AS target
+  UNION ALL SELECT 'LA_CAMA',
+         CASE WHEN f.maxLossMargin >= 10 THEN 'U' ELSE 'L' END, f.maxLossMargin, 10
+  UNION ALL SELECT 'CORONADOS',
+         CASE WHEN f.championships >= 1 THEN 'U' ELSE 'L' END, NULL, NULL
+  UNION ALL SELECT 'PRIMER_PERDEDOR',
+         CASE WHEN f.runnerUps >= 1 THEN 'U' ELSE 'L' END, NULL, NULL
+  UNION ALL SELECT 'ESTAMOS_EN_LA_B',
+         CASE WHEN f.bottomTwo >= 1 THEN 'U' ELSE 'L' END, NULL, NULL
+  UNION ALL SELECT 'LA_PROMOCION',
+         CASE WHEN f.thirdFromBottom >= 1 THEN 'U' ELSE 'L' END, NULL, NULL
+  UNION ALL SELECT 'MANO_A_MANO',
+         CASE WHEN f.draws >= 10 THEN 'U' ELSE 'L' END, f.draws, 10
+  UNION ALL SELECT 'EL_CORNUDO',
+         CASE WHEN f.bestWinStreak >= 10 THEN 'U' ELSE 'L' END, f.bestWinStreak, 10
+  UNION ALL SELECT 'DEJALO_AMIGO',
+         CASE WHEN f.worstLossStreak >= 10 THEN 'U' ELSE 'L' END, f.worstLossStreak, 10
+  -- No mira el contador de descensos sino lo mas cerca que estuvo de uno, para
+  -- que la barra se llene mientras se hunde y no salte de vacia a completa. Con
+  -- un descenso ya son 8, asi que el umbral es el mismo numero.
+  UNION ALL SELECT 'ESTA_MANCHA',
+         CASE WHEN f.relegations >= 1 THEN 'U' ELSE 'L' END, f.worstRelegationMatches, 8
+  -- Descender es facil de a empates; este pide las ocho perdidas. Sin barra: no
+  -- hay medio camino que mostrar -siete derrotas y un empate no es "casi", es
+  -- otra cosa- y el progreso seria mentir sobre lo que falta.
+  UNION ALL SELECT 'AL_MENOS_INTENTA',
+         CASE WHEN f.allLossRelegations >= 1 THEN 'U' ELSE 'L' END, NULL, NULL
+  UNION ALL SELECT 'COLECCIONISTA',
+         CASE WHEN f.points >= 100 THEN 'U' ELSE 'L' END, FLOOR(f.points), 100
+  UNION ALL SELECT 'PERRO_VIEJO',
+         CASE WHEN f.played >= 50 THEN 'U' ELSE 'L' END, f.played, 50
+  UNION ALL SELECT 'BUSCATE_UN_LABURO',
+         CASE WHEN f.bestAttendanceStreak >= 20 THEN 'U' ELSE 'L' END, f.bestAttendanceStreak, 20
+  UNION ALL SELECT 'SE_BUSCA',
+         CASE WHEN f.bestAbsenceStreak >= 10 THEN 'U' ELSE 'L' END, f.bestAbsenceStreak, 10
+  UNION ALL SELECT 'PICHICHI',
+         CASE WHEN f.peakGoalDiff >= 50 THEN 'U' ELSE 'L' END, f.peakGoalDiff, 50
+  -- El unico con umbral negativo: el progreso viaja en positivo para que la
+  -- barra del frontend no tenga que saber de signos.
+  UNION ALL SELECT 'PICHI',
+         CASE WHEN f.floorGoalDiff <= -50 THEN 'U' ELSE 'L' END, -f.floorGoalDiff, 50
+  UNION ALL SELECT 'PECHOFRIO',
+         CASE WHEN f.chokedRuns >= 1 THEN 'U' ELSE 'L' END, NULL, NULL
+  UNION ALL SELECT 'PURO_HUEVO',
+         CASE WHEN f.comebackTitles >= 1 THEN 'U' ELSE 'L' END, NULL, NULL
+  UNION ALL SELECT 'EX_EQUIPO',
+         CASE WHEN f.maxDerbyLossMargin >= 7 THEN 'U' ELSE 'L' END, f.maxDerbyLossMargin, 7
+  UNION ALL SELECT 'HERMOSA_MANIANA',
+         CASE WHEN f.maxDerbyWinMargin >= 7 THEN 'U' ELSE 'L' END, f.maxDerbyWinMargin, 7
+  UNION ALL SELECT 'LEYENDA',
+         CASE WHEN f.derbiesPlayed >= 8 THEN 'U' ELSE 'L' END, f.derbiesPlayed, 8
+  UNION ALL SELECT 'CAMPEON_DEL_MUNDO',
+         CASE WHEN f.mundialitoTitles >= 1 THEN 'U' ELSE 'L' END, NULL, NULL
+  UNION ALL SELECT 'JUEGUEN_ENSERIO',
+         CASE WHEN f.unbeatenTitles >= 1 THEN 'U' ELSE 'L' END, NULL, NULL
+  UNION ALL SELECT 'INVENTEN_DEPORTE',
+         CASE WHEN f.perfectRuns >= 1 THEN 'U' ELSE 'L' END, NULL, NULL
+  -- Maldicion: llegar al quinto partido una sola vez la rompe para siempre, haya
+  -- alcanzado o no las cinco corridas cortas.
+  UNION ALL SELECT 'MEXICANO',
+         CASE WHEN f.bestSlot >= 6 THEN 'B'
+              WHEN f.shortRuns >= 5 THEN 'U'
+              ELSE 'L' END, f.shortRuns, 5
+  -- Maldicion: la primera copa deja de ser candidato para siempre.
+  UNION ALL SELECT 'ETERNO_CANDIDATO',
+         CASE WHEN f.mundialitoTitles >= 1 THEN 'B'
+              WHEN f.semiRuns >= 4 THEN 'U'
+              ELSE 'L' END, f.semiRuns, 4
+  UNION ALL SELECT 'REPECHAJE',
+         CASE WHEN f.groupZeroRuns >= 1 THEN 'U' ELSE 'L' END, NULL, NULL
+  UNION ALL SELECT 'EZ',
+         CASE WHEN f.maxFinalWinMargin >= 8 THEN 'U' ELSE 'L' END, f.maxFinalWinMargin, 8
+  UNION ALL SELECT 'DIA_PARA_OLVIDO',
+         CASE WHEN f.maxFinalLossMargin >= 8 THEN 'U' ELSE 'L' END, f.maxFinalLossMargin, 8
+) r;

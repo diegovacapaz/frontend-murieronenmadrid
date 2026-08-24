@@ -18,7 +18,7 @@ import type {
 } from './database';
 
 /**
- * Lo que devuelve GetPlayerStats, con sus siete result sets ya nombrados.
+ * Lo que devuelve GetPlayerStats, con sus once result sets ya nombrados.
  *
  * El SP los emite en orden y el repository los desestructura; a partir de aca
  * nadie depende de ese orden. Si mañana se agrega uno nuevo, va al final del SP
@@ -34,6 +34,8 @@ export interface PlayerStats {
   teamDistribution: TeamDistributionFields[];
   streaks: import('./database').PlayerStreaksFields;
   activity: import('./database').PlayerActivityFields[];
+  relegationRuns: import('./database').RelegationRunFields[];
+  relegationMatches: import('./database').RelegationRunMatchFields[];
 }
 
 export interface TournamentStats {
@@ -54,6 +56,8 @@ export interface GeneralStats {
   topWinRate: TopWinRateFields[];
   records: RecordsFields;
   streakRecords: import('./database').StreakRecordFields[];
+  winlessRecords: import('./database').StreakRecordFields[];
+  relegations: import('./database').RelegationRankFields[];
 }
 
 export interface IStatsRepository {

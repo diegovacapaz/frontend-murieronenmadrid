@@ -38,6 +38,9 @@ export class PlayerStatsSummaryDto {
   @ApiProperty() penalty!: number;
   @ApiProperty() netPoints!: number;
 
+  @ApiProperty({ description: 'Cuantas veces descendio. Cero es lo normal.' })
+  relegations!: number;
+
   @ApiPropertyOptional({
     nullable: true,
     description: 'Torneo de su primer partido. Se deduce, no se edita.',
@@ -185,6 +188,61 @@ export class PlayerActivityDto {
   team!: Team | null;
 }
 
+/**
+ * Una carrera al descenso: el bloque de ocho partidos sin ganar dentro de un
+ * tramo que solo corta una victoria. Las consumadas llegan a 8; el resto se
+ * quedaron a mitad de camino, sea porque llego la victoria o porque todavia se
+ * esta jugando.
+ */
+export class RelegationRunDto {
+  @ApiProperty({ description: 'Cronologico desde 1. Correlaciona con los partidos.' })
+  runIndex!: number;
+
+  @ApiProperty({ description: 'El contador del descenso: partidos sin ganar, de 1 a 8.' })
+  matches!: number;
+
+  @ApiProperty({ description: 'De esos partidos, cuantos se perdieron.' })
+  losses!: number;
+
+  @ApiProperty({ description: 'Y cuantos se empataron. Suman igual al descenso.' })
+  draws!: number;
+
+  @ApiProperty() startedAt!: Date;
+
+  @ApiPropertyOptional({
+    nullable: true,
+    description: 'El octavo partido. null si la carrera no termino en descenso.',
+  })
+  endedAt!: Date | null;
+
+  @ApiProperty({ description: '1 si llego a los ocho.' })
+  isRelegated!: number;
+
+  @ApiProperty({ description: '1 si descendio sin un solo empate.' })
+  isAllLosses!: number;
+
+  @ApiProperty({ description: '1 si todavia puede consumarse.' })
+  isOpen!: number;
+}
+
+/** Un partido de una carrera. El empate acerca al descenso igual que la derrota. */
+export class RelegationRunMatchDto {
+  @ApiProperty() runIndex!: number;
+  @ApiProperty() matchId!: number;
+  @ApiProperty() tournamentId!: number;
+  @ApiProperty() tournamentName!: string;
+  @ApiProperty() playedAt!: Date;
+  @ApiProperty({ enum: MatchResult }) result!: MatchResult;
+
+  @ApiProperty({ description: 'Con signo desde su punto de vista.' })
+  goalsDiference!: number;
+
+  @ApiProperty({ enum: Team }) team!: Team;
+
+  @ApiProperty({ description: 'Su casilla en la carrera, de 1 a 8.' })
+  posInRace!: number;
+}
+
 export class PlayerStatsResponseDto {
   @ApiProperty({ type: PlayerStatsSummaryDto })
   summary!: PlayerStatsSummaryDto;
@@ -221,4 +279,16 @@ export class PlayerStatsResponseDto {
     description: 'Todos los partidos del grupo; result en null es una ausencia.',
   })
   activity!: PlayerActivityDto[];
+
+  @ApiProperty({
+    type: [RelegationRunDto],
+    description: 'Todas sus carreras al descenso, tambien las que se salvaron.',
+  })
+  relegationRuns!: RelegationRunDto[];
+
+  @ApiProperty({
+    type: [RelegationRunMatchDto],
+    description: 'Los partidos de cada carrera, unidos por runIndex.',
+  })
+  relegationMatches!: RelegationRunMatchDto[];
 }

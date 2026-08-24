@@ -13,6 +13,9 @@ import {
   PlayerStreaksDB,
   PlayerTournamentStatDB,
   RecordsDB,
+  RelegationRankDB,
+  RelegationRunDB,
+  RelegationRunMatchDB,
   RivalStatDB,
   StatHighlightDB,
   StreakRecordDB,
@@ -60,6 +63,8 @@ export class StatsRepository implements IStatsRepository {
       teamDistribution,
       streaks,
       activity,
+      relegationRuns,
+      relegationMatches,
     ] = await this.db.callMulti<
       [
         PlayerStatsSummaryDB[],
@@ -71,6 +76,8 @@ export class StatsRepository implements IStatsRepository {
         TeamDistributionDB[],
         PlayerStreaksDB[],
         PlayerActivityDB[],
+        RelegationRunDB[],
+        RelegationRunMatchDB[],
       ]
     >('GetPlayerStats', [playerId, minAgainst, minTogether]);
 
@@ -84,6 +91,8 @@ export class StatsRepository implements IStatsRepository {
       teamDistribution: StatsFactory.teamDistribution(teamDistribution),
       streaks: StatsFactory.playerStreaks(this.firstOrFail(streaks, 'GetPlayerStats')),
       activity: StatsFactory.playerActivity(activity),
+      relegationRuns: StatsFactory.relegationRuns(relegationRuns),
+      relegationMatches: StatsFactory.relegationMatches(relegationMatches),
     };
   }
 
@@ -123,6 +132,8 @@ export class StatsRepository implements IStatsRepository {
       topWinRate,
       records,
       streakRecords,
+      winlessRecords,
+      relegations,
     ] = await this.db.callMulti<
       [
         GeneralStatsSummaryDB[],
@@ -132,6 +143,8 @@ export class StatsRepository implements IStatsRepository {
         TopWinRateDB[],
         RecordsDB[],
         StreakRecordDB[],
+        StreakRecordDB[],
+        RelegationRankDB[],
       ]
     >('GetGeneralStats', [minMatches]);
 
@@ -143,6 +156,8 @@ export class StatsRepository implements IStatsRepository {
       topWinRate: StatsFactory.topWinRate(topWinRate),
       records: StatsFactory.records(this.firstOrFail(records, 'GetGeneralStats')),
       streakRecords: StatsFactory.streakRecords(streakRecords),
+      winlessRecords: StatsFactory.streakRecords(winlessRecords),
+      relegations: StatsFactory.relegations(relegations),
     };
   }
 

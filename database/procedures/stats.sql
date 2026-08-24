@@ -30,6 +30,8 @@
 --   7. teamDistribution cuanto jugo en cada equipo y como le fue
 --   8. streaks          rachas: la actual, la mejor invicta, la peor sequia
 --   9. activity         todos los partidos del grupo, con si jugo o falto
+--  10. relegationRuns   cada carrera al descenso, completa o no
+--  11. relegationMatches  los partidos de cada carrera, para dibujar el camino
 --
 -- pMinAgainst / pMinTogether: minimo de cruces y de partidos juntos para que
 -- un rival o un companiero entre en los destacados. Vienen del service (5 y 5,
@@ -92,10 +94,16 @@ BEGIN
         g.winRate,
         COALESCE(g.penalty, 0)           AS penalty,
         COALESCE(g.netPoints, 0)         AS netPoints,
+        -- Va en el summary y no en el result set de descensos porque la
+        -- insignia del encabezado se dibuja antes de que exista ninguna
+        -- carrera: el que nunca bajo tiene que llegar con un cero, no con una
+        -- lista vacia que el frontend tenga que interpretar.
+        COALESCE(rel.relegations, 0)     AS relegations,
         vDebutTournamentId               AS debutTournamentId,
         vDebutTournamentName             AS debutTournamentName
     FROM vPlayerDetail p
-    LEFT JOIN vGeneralStandings g ON g.playerId = p.playerId
+    LEFT JOIN vGeneralStandings g  ON g.playerId   = p.playerId
+    LEFT JOIN vPlayerRelegations rel ON rel.playerId = p.playerId
     WHERE p.playerId = pPlayerId;
 
     -- ── 2. perTournament ──────────────────────────────────────────────────────
@@ -360,6 +368,52 @@ BEGIN
       ON r.matchId  = m.matchId
      AND r.playerId = pPlayerId
     ORDER BY m.playedAt, m.matchId;
+
+    -- ── 10. relegationRuns ────────────────────────────────────────────────────
+    -- Cada carrera al descenso del jugador, en orden cronologico. Vienen TODAS,
+    -- tambien las que se salvaron con dos partidos: es el frontend el que
+    -- decide cual mostrar segun el caso —los descensos consumados, la que esta
+    -- en curso, o la mas cerca que estuvo el que nunca bajo— y para eso las
+    -- necesita a mano. Son pocas filas por jugador.
+    SELECT
+        r.runIndex,
+        r.matches,
+        r.losses,
+        r.draws,
+        r.startedAt,
+        r.endedAt,
+        r.isRelegated,
+        r.isAllLosses,
+        r.isOpen
+    FROM vPlayerRelegationRuns r
+    WHERE r.playerId = pPlayerId
+    ORDER BY r.runIndex;
+
+    -- ── 11. relegationMatches ─────────────────────────────────────────────────
+    -- Los partidos de cada carrera, para dibujar el camino paso a paso. Se
+    -- correlacionan con el result set anterior por runIndex.
+    --
+    -- Los empates estan y cuentan igual que las derrotas: la unica diferencia
+    -- que sobrevive es el color con que el perfil los pinta. posInRace es la
+    -- casilla, de 1 a 8, y es lo unico que define el orden del dibujo.
+    SELECT
+        r.runIndex,
+        m.matchId,
+        m.tournamentId,
+        t.`name` AS tournamentName,
+        m.playedAt,
+        m.result,
+        m.goalsDiference,
+        m.team,
+        m.posInRace
+    FROM vPlayerWinlessRunMatches m
+    INNER JOIN vPlayerRelegationRuns r
+        ON r.playerId = m.playerId
+       AND r.runId    = m.runId
+       AND r.raceNo   = m.raceNo
+    INNER JOIN Tournaments t ON t.tournamentId = m.tournamentId
+    WHERE m.playerId = pPlayerId
+    ORDER BY r.runIndex, m.playedAt, m.matchId;
 END //
 DELIMITER ;
 
@@ -663,6 +717,8 @@ DELIMITER ;
 --   5. topWinRate       los mejores por winrate, con minimo de partidos
 --   6. records          maximos y minimos de una sola pasada
 --   7. streakRecords    las rachas invictas mas largas de la historia
+--   8. winlessRecords   las rachas sin ganar mas largas, el espejo del anterior
+--   9. relegations      quien descendio y cuantas veces
 DROP PROCEDURE IF EXISTS GetGeneralStats;
 
 DELIMITER //
@@ -792,5 +848,46 @@ BEGIN
       AND s.length >= 5
     ORDER BY s.length DESC, s.endedAt DESC
     LIMIT 5;
+
+    -- ── 8. winlessRecords ─────────────────────────────────────────────────────
+    -- El espejo del anterior: los tramos sin ganar mas largos. Misma consulta
+    -- cambiando una constante, mismo minimo y mismo tope, porque las dos tablas
+    -- se leen una al lado de la otra y con distinto corte no se comparan.
+    --
+    -- Cuenta partidos sin ganar, que es EXACTAMENTE la misma medida del
+    -- descenso: cada ocho de estos es una bajada de categoria. Las dos tablas
+    -- miden lo mismo a distinta escala, y por eso van una pegada a la otra.
+    SELECT
+        s.playerId,
+        p.displayName,
+        p.photo,
+        s.length,
+        s.startedAt,
+        s.endedAt,
+        s.isOpen
+    FROM vPlayerStreakIslands s
+    INNER JOIN vPlayerDetail p ON p.playerId = s.playerId
+    WHERE s.kind = 'WINLESS'
+      AND s.length >= 5
+    ORDER BY s.length DESC, s.endedAt DESC
+    LIMIT 5;
+
+    -- ── 9. relegations ────────────────────────────────────────────────────────
+    -- La tabla de descensos: solo los que bajaron alguna vez, SIN TOPE. No es
+    -- un podio de cinco como las dos de arriba —esas se recortan porque hay
+    -- rachas de sobra—: aca la lista es corta por naturaleza y va completa. El
+    -- que no esta es porque no descendio.
+    SELECT
+        r.playerId,
+        p.displayName,
+        p.photo,
+        r.relegations,
+        r.allLossRelegations,
+        r.firstRelegationAt,
+        r.lastRelegationAt
+    FROM vPlayerRelegations r
+    INNER JOIN vPlayerDetail p ON p.playerId = r.playerId
+    WHERE r.relegations > 0
+    ORDER BY r.relegations DESC, r.lastRelegationAt DESC, p.displayName;
 END //
 DELIMITER ;
