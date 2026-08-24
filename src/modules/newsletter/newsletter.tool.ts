@@ -6,10 +6,30 @@ export const MAX_NOTAS = 10;
 /**
  * La única forma en que el modelo publica.
  *
- * `strict: true` hace que la API garantice que el input valida contra este
- * schema, así que del lado nuestro no hay que parsear prosa buscando un JSON.
- * Lo que el schema NO puede expresar —que haya exactamente una portada, que los
- * playerId existan— lo chequea edition.validator.ts.
+ * `strict: true` hace que la API garantice la FORMA del input: que venga
+ * `notas`, que cada nota tenga las cinco claves obligatorias, que `seccion` y
+ * `rol` sean uno de los literales del enum, que no haya claves de más. Eso es
+ * lo que evita tener que parsear prosa buscando un JSON.
+ *
+ * **Lo que NO garantiza son los largos ni los topes de array.** El subconjunto
+ * de JSON Schema que la API acepta para structured outputs excluye las
+ * restricciones de string y las de array complejas: el normalizador del propio
+ * SDK (`transform-json-schema.ts`) conserva `type`, `properties`, `required`,
+ * `additionalProperties`, `items` y `minItems` sólo cuando vale 0 o 1, y
+ * degrada el resto a texto de descripción. Y ese normalizador corre en el
+ * camino de los helpers: un `Anthropic.Tool` crudo como este viaja tal cual.
+ *
+ * O sea que `maxLength`, `maxItems` y `minItems: 1` acá valen como pista para
+ * el modelo, no como contrato. El que hace cumplir los topes de las columnas es
+ * `edition.validator.ts`, que recorta. Ahí también viven las reglas que ningún
+ * schema puede expresar: que haya exactamente una portada, que los playerId
+ * existan y que no se repitan dentro de una nota.
+ *
+ * Se dejan declarados igual porque son documentación que el modelo lee y porque
+ * el día que la API los soporte empiezan a valer sin tocar nada. Riesgo abierto
+ * para el dry-run: si la API los RECHAZA con 400 en vez de ignorarlos, el
+ * diario no publica nunca — es lo primero que hay que mirar en la primera
+ * llamada real.
  */
 export const PUBLICAR_EDICION_TOOL: Anthropic.Tool = {
   name: 'publicarEdicion',

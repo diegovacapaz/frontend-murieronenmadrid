@@ -19,6 +19,16 @@ const ROLES: Record<string, PlayerRole> = {
   MENCION: PlayerRole.MENCION,
 };
 
+/**
+ * Peso de cada rol, para cuando el modelo nombra al mismo jugador dos veces en
+ * la misma nota. Gana el más fuerte: si alguien es héroe y mención, es héroe.
+ */
+const PESO_ROL: Record<PlayerRole, number> = {
+  [PlayerRole.HEROE]: 3,
+  [PlayerRole.VILLANO]: 2,
+  [PlayerRole.MENCION]: 1,
+};
+
 /** Topes de las columnas de NewsletterArticles. */
 const LIMITES = { titular: 120, copete: 240, cuerpo: 16000 } as const;
 
@@ -27,19 +37,62 @@ function recortar(valor: unknown, tope: number): string {
 }
 
 /**
+ * Los jugadores de una nota, filtrados y SIN REPETIDOS.
+ *
+ * La deduplicación no es prolijidad: `NewsletterArticlePlayers` tiene
+ * `PRIMARY KEY (articleId, playerId)`, así que el mismo playerId dos veces en
+ * una nota —cosa que el schema de la herramienta no puede prohibir, y que pasa
+ * naturalmente cuando el modelo lo nombra como héroe de un párrafo y mención de
+ * otro— es un `ER_DUP_ENTRY` que se lleva puesta la edición ENTERA, no la nota.
+ * Es exactamente la clase de regla que el validador existe para atajar.
+ *
+ * Se conserva el orden en que vinieron (el Map lo garantiza) y, del repetido,
+ * el rol de más peso: el rol decide qué foto ilustra la nota y quedarse con la
+ * mención de alguien que era el héroe cambia la portada.
+ */
+function jugadoresDeLaNota(
+  crudos: unknown,
+  playerIdsValidos: Set<number>,
+): NotaValidada['jugadores'] {
+  const porJugador = new Map<number, PlayerRole>();
+
+  for (const crudo of Array.isArray(crudos) ? crudos : []) {
+    if (typeof crudo !== 'object' || crudo === null) continue;
+    const jugador = crudo as Record<string, unknown>;
+
+    const playerId = Number(jugador.playerId);
+    const rol = ROLES[String(jugador.rol)];
+    if (!rol || !playerIdsValidos.has(playerId)) continue;
+
+    const previo = porJugador.get(playerId);
+    if (previo === undefined || PESO_ROL[rol] > PESO_ROL[previo]) {
+      porJugador.set(playerId, rol);
+    }
+  }
+
+  return [...porJugador].map(([playerId, rol]) => ({ playerId, rol }));
+}
+
+/**
  * Lo que el schema de la herramienta no puede expresar.
  *
- * `strict: true` ya garantizó que el input tenga la forma declarada, así que
- * esto NO vuelve a validar tipos. Chequea tres reglas de negocio y hace una
- * traducción:
+ * `strict: true` garantiza la FORMA y los TIPOS: que venga `notas`, que cada
+ * nota tenga las cinco claves, que `seccion` sea uno de los ocho literales.
+ * **No garantiza los largos.** El subconjunto de JSON Schema que la API acepta
+ * para structured outputs deja afuera las restricciones de string, así que
+ * `maxLength` es —en el mejor de los casos— una sugerencia en prosa para el
+ * modelo. Un titular de 300 caracteres puede llegar perfectamente.
  *
+ * Por eso esto hace cuatro cosas, y el recorte NO es paranoia sino la única
+ * defensa contra un `data too long` a las cinco de la mañana:
+ *
+ *   · recorta los textos a los topes REALES de las columnas;
  *   · exactamente una portada — cero o dos y la edición no se publica;
- *   · las menciones a jugadores que no existen se DESCARTAN, no tiran la nota:
- *     que el modelo se haya equivocado con un id no es razón para perder una
- *     crónica que puede estar perfecta;
- *   · la portada queda primera, sin importar en qué orden vino;
- *   · y recorta los textos. El schema declara maxLength, pero recortar es más
- *     barato que una excepción de MySQL a las cinco de la mañana.
+ *   · las menciones a jugadores que no existen se DESCARTAN, y los repetidos se
+ *     unifican: que el modelo se haya equivocado con un id no es razón para
+ *     perder una crónica que puede estar perfecta, y que haya nombrado dos
+ *     veces al mismo tipo no es razón para perder la edición entera;
+ *   · la portada queda primera, sin importar en qué orden vino.
  */
 export function validarEdicion(
   input: unknown,
@@ -67,19 +120,12 @@ export function validarEdicion(
     const cuerpo = recortar(nota.cuerpo, LIMITES.cuerpo);
     if (titular === '' || cuerpo === '') continue;
 
-    const jugadores = (Array.isArray(nota.jugadores) ? nota.jugadores : [])
-      .map((j) => j as Record<string, unknown>)
-      .filter(
-        (j) => playerIdsValidos.has(Number(j.playerId)) && ROLES[String(j.rol)],
-      )
-      .map((j) => ({ playerId: Number(j.playerId), rol: ROLES[String(j.rol)] }));
-
     notas.push({
       seccion,
       titular,
       copete: recortar(nota.copete, LIMITES.copete),
       cuerpo,
-      jugadores,
+      jugadores: jugadoresDeLaNota(nota.jugadores, playerIdsValidos),
     });
   }
 
