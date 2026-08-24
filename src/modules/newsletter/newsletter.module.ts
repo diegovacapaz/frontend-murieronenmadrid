@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { DatabaseModule } from '../../database/database.module';
 import { DossierBuilder } from './dossier.builder';
+import { NewsletterClient } from './newsletter.client';
 import { NEWSLETTER_REPOSITORY } from './newsletter.constants';
 import { NewsletterController } from './newsletter.controller';
 import { NewsletterRepository } from './newsletter.repository';
@@ -17,7 +18,11 @@ import { NewsletterService } from './newsletter.service';
     // que orquesta ~60 llamadas a los procedures de otros módulos y arma con
     // eso el input del modelo. Se inyecta por clase, como el service.
     DossierBuilder,
+    // El cliente se inyecta por clase, igual que el builder: no es un
+    // repositorio y no hay una segunda implementación que justifique un token.
+    // GlobalsService, lo único que pide, viene del GlobalsModule que es @Global.
+    NewsletterClient,
   ],
-  exports: [NewsletterService, DossierBuilder],
+  exports: [NewsletterService, DossierBuilder, NewsletterClient],
 })
 export class NewsletterModule {}
