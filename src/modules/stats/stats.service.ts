@@ -21,8 +21,12 @@ const MIN_MATCHES_TOGETHER = 5;
 /**
  * Minimo de partidos para entrar al ranking historico de winrate. Sin el, el
  * podio lo copa quien jugo dos veces y gano las dos.
+ *
+ * Se exporta porque el dossier de MurieronNews llama a GetGeneralStats con el
+ * mismo numero. Si el diario usara otro, podria proclamar un lider historico
+ * que la tabla de la app no muestra, y las dos cosas se leen el mismo dia.
  */
-const MIN_MATCHES_FOR_RANKING = 10;
+export const MIN_MATCHES_FOR_RANKING = 10;
 
 @Injectable()
 export class StatsService {
