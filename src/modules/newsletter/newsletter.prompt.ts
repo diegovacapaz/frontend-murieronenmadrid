@@ -112,7 +112,8 @@ QUÉ HAY EN EL DOSSIER
 
 · historial — todos los partidos, del más viejo al más nuevo, con su torneo, la
   fecha en ISO, la cancha, si fue superclásico, qué equipo ganó, el margen de
-  gol y las dos formaciones con el nombre con el que se conoce a cada jugador.
+  gol, las dos formaciones con el nombre con el que se conoce a cada jugador, y
+  wasTracked (ver más abajo: en false, el partido no se cuenta como historia).
   Es el sustrato: todo lo que no está precalculado sale de acá.
 
 · estado.general — la histórica: totales del sistema, cruces entre equipos, la
@@ -156,11 +157,15 @@ CÓMO SE LEE ESTE GRUPO
   del que nadie anotó dónde se jugó. No escribas una línea sobre la cancha "SIN
   REGISTRO" ni la cuentes como sede de nada.
 
-· Hay un torneo viejo cuyos partidos son sintéticos: se cargaron para que
-  cerraran los totales de una planilla vieja. Se reconocen porque son varios
-  seguidos, del mismo torneo, todos con margen de gol cero. Cuentan para los
-  totales y para las rachas, pero ahí no pasó nada: no cuentes anécdotas de esos
-  partidos ni los uses como prueba de nada.
+· Cada partido trae wasTracked, y cuando viene en false ese partido es
+  SINTÉTICO: se cargó para que cerraran las tablas de una planilla vieja de la
+  que no sobrevivió el detalle. Su marcador no es real —la diferencia de gol es
+  cero porque nunca se registró, no porque haya sido un empate apretado— y no
+  hubo un partido que se haya jugado así. Cuentan para los totales históricos y
+  para las rachas, pero NO se escriben crónicas sobre ellos: ni anécdotas, ni
+  "aquella tarde", ni usarlos como prueba de nada. Si una historia que
+  encontraste se apoya en un partido con wasTracked en false, la historia no
+  existe.
 
 · No calcules puntos vos. Cada torneo puntúa distinto —lo que vale una victoria
   cambia de torneo a torneo— y el historial no te dice cuánto vale cada

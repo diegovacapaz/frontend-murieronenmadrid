@@ -10,6 +10,8 @@ interface MatchDetailDB extends Row {
   matchId: number;
   tournamentId: number;
   tournamentName: string;
+  /** De Tournaments, que la vista no expone. El typeCast del pool ya lo hace boolean. */
+  wasTracked: boolean;
   winnerTeam: string | null;
   goalsDiference: number;
   place: string;
@@ -196,20 +198,30 @@ export class DossierBuilder {
    * en el diario. De esa convocatoria acá se conservan dos campos: el resto
    * —foto, nombre y apellido, apodo suelto— triplicaría el historial sin
    * agregarle nada al relato.
+   *
+   * El JOIN contra Tournaments es por `wasTracked`, que es lo único que la
+   * vista no expone y el diario necesita: sin esa columna el modelo no tiene
+   * forma de distinguir un partido real de uno sintético, y termina escribiendo
+   * la crónica de un partido que nunca se jugó así. Se resuelve con un join a
+   * una tabla de cinco filas y NO tocando `vMatchDetail`, que la consume medio
+   * sistema: el dossier es el único que necesita el dato.
    */
   private async historial(): Promise<HistorialPartido[]> {
     return this.db.withConnection(async (conn) => {
       const [rows] = await conn.execute<MatchDetailDB[] & RowDataPacket[]>(
-        `SELECT matchId, tournamentId, tournamentName, winnerTeam, goalsDiference,
-                place, playedAt, isDerby, players
-           FROM vMatchDetail
-          ORDER BY playedAt, matchId`,
+        `SELECT v.matchId, v.tournamentId, v.tournamentName, t.wasTracked,
+                v.winnerTeam, v.goalsDiference, v.place, v.playedAt, v.isDerby,
+                v.players
+           FROM vMatchDetail v
+           INNER JOIN Tournaments t ON t.tournamentId = v.tournamentId
+          ORDER BY v.playedAt, v.matchId`,
       );
 
       return rows.map((row) => ({
         matchId: row.matchId,
         tournamentId: row.tournamentId,
         tournamentName: row.tournamentName,
+        wasTracked: row.wasTracked,
         // La columna es DATETIME y el pool la entrega como Date en UTC. Sale
         // como string con sufijo Z, que es la convención de toda la API.
         playedAt: row.playedAt.toISOString(),

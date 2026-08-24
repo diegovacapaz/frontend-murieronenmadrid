@@ -86,6 +86,20 @@ export interface HistorialPartido {
   matchId: number;
   tournamentId: number;
   tournamentName: string;
+  /**
+   * `false` en los partidos sintéticos: los que `scripts/seed.mjs` generó para
+   * reproducir la tabla final de una planilla vieja de la que no sobrevivió el
+   * detalle. Sus marcadores no son reales —la diferencia de gol es cero porque
+   * nunca se registró, no porque haya sido un empate apretado—.
+   *
+   * Sale de `Tournaments.wasTracked` y viaja por partido y no por torneo porque
+   * el modelo recorre partidos, no torneos: si tuviera que cruzar contra una
+   * lista de torneos para saber si puede contar una anécdota, tarde o temprano
+   * no la cruza. Cuentan para los totales y las rachas —el resto del sistema ya
+   * los cuenta— pero no tienen historia que contar, y el prompt se lo prohíbe
+   * explícitamente.
+   */
+  wasTracked: boolean;
   playedAt: string; // ISO, para que el modelo pueda ordenar y restar
   place: string;
   isDerby: boolean;
