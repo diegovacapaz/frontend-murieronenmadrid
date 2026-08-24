@@ -1,5 +1,6 @@
 import { ArticleSection, PlayerRole } from '../enums/newsletter.enums';
 import type { NotaValidada, ResultadoValidacion } from '../interfaces/validacion';
+import { MAX_JUGADORES_POR_NOTA, MAX_NOTAS } from '../newsletter.tool';
 
 /** Los nombres que ve el modelo → el CHAR(1) que guarda la base. */
 const SECCIONES: Record<string, ArticleSection> = {
@@ -70,7 +71,12 @@ function jugadoresDeLaNota(
     }
   }
 
-  return [...porJugador].map(([playerId, rol]) => ({ playerId, rol }));
+  // El tope también se recorta acá: `maxItems` hace que la API rechace la
+  // herramienta entera (ver newsletter.tool.ts), así que en el schema no está y
+  // el único que lo puede hacer cumplir es este.
+  return [...porJugador]
+    .slice(0, MAX_JUGADORES_POR_NOTA)
+    .map(([playerId, rol]) => ({ playerId, rol }));
 }
 
 /**
@@ -78,15 +84,18 @@ function jugadoresDeLaNota(
  *
  * `strict: true` garantiza la FORMA y los TIPOS: que venga `notas`, que cada
  * nota tenga las cinco claves, que `seccion` sea uno de los ocho literales.
- * **No garantiza los largos.** El subconjunto de JSON Schema que la API acepta
- * para structured outputs deja afuera las restricciones de string, así que
- * `maxLength` es —en el mejor de los casos— una sugerencia en prosa para el
- * modelo. Un titular de 300 caracteres puede llegar perfectamente.
+ * **No garantiza ni los largos ni las cantidades.** Los largos porque el
+ * subconjunto de structured outputs deja afuera las restricciones de string, y
+ * las cantidades porque `maxItems` directamente hace que la API rechace la
+ * herramienta con un 400 y por eso no está en el schema (ver
+ * `newsletter.tool.ts`).
  *
- * Por eso esto hace cuatro cosas, y el recorte NO es paranoia sino la única
- * defensa contra un `data too long` a las cinco de la mañana:
+ * O sea que este archivo es el ÚNICO lugar donde los topes existen de verdad.
+ * Nada de lo que hace es de más:
  *
- *   · recorta los textos a los topes REALES de las columnas;
+ *   · recorta los textos a los topes REALES de las columnas — la defensa contra
+ *     un `data too long` a las cinco de la mañana;
+ *   · recorta a diez notas y a ocho jugadores por nota;
  *   · exactamente una portada — cero o dos y la edición no se publica;
  *   · las menciones a jugadores que no existen se DESCARTAN, y los repetidos se
  *     unifican: que el modelo se haya equivocado con un id no es razón para
@@ -139,6 +148,12 @@ export function validarEdicion(
 
   // La portada primero. El resto conserva el orden en que vino: el modelo
   // decidió esa jerarquía y no hay motivo para pisarla.
+  //
+  // Y el recorte a MAX_NOTAS va DESPUÉS de poner la portada adelante, no antes:
+  // si el modelo mandó veinticinco notas con la portada en el puesto quince,
+  // recortar primero la tiraría y la edición se rechazaría por no tener
+  // portada. Al revés, la portada sobrevive siempre y lo que se pierde es la
+  // cola, que es lo que el propio modelo dejó para el final.
   const resto = notas.filter((n) => n.seccion !== ArticleSection.PORTADA);
-  return { ok: true, notas: [...portadas, ...resto] };
+  return { ok: true, notas: [...portadas, ...resto].slice(0, MAX_NOTAS) };
 }

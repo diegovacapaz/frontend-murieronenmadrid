@@ -176,6 +176,65 @@ describe('validarEdicion', () => {
    * la que se cayó fuera la portada, y entonces la edición no se publica, que
    * es lo correcto.
    */
+  /**
+   * `maxItems` no está en el schema porque la API rechaza la herramienta entera
+   * con un 400 si lo ve (probado contra la API real, ver newsletter.tool.ts).
+   * O sea que este recorte es la ÚNICA defensa que queda para los dos topes.
+   *
+   * El orden importa y por eso la portada va última en el input: si el recorte
+   * corriera antes de subirla al frente, una portada más allá del puesto diez
+   * se perdería y la edición se rechazaría entera.
+   */
+  it('recorta a diez notas y la portada sobrevive aunque viniera más allá del tope', () => {
+    const veinticinco = [
+      ...Array.from({ length: 24 }, (_, i) =>
+        nota({ seccion: 'BREVES', titular: `Breve ${i}` }),
+      ),
+      nota({ seccion: 'PORTADA', titular: 'Portada' }),
+    ];
+
+    const r = validarEdicion({ notas: veinticinco }, VALIDOS);
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.notas).toHaveLength(10);
+      expect(r.notas[0].titular).toBe('Portada');
+      expect(r.notas[1].titular).toBe('Breve 0');
+    }
+  });
+
+  it('recorta a ocho jugadores por nota, después de deduplicar', () => {
+    const doce = Array.from({ length: 12 }, () => ({
+      playerId: 7,
+      rol: 'MENCION',
+    }));
+
+    const r = validarEdicion(
+      {
+        notas: [
+          nota({ seccion: 'PORTADA', jugadores: doce }),
+          nota({
+            seccion: 'BREVES',
+            // Doce jugadores distintos, todos válidos: se conservan los ocho
+            // primeros. VALIDOS solo tiene dos ids, así que el set se amplía.
+            jugadores: Array.from({ length: 12 }, (_, i) => ({
+              playerId: i + 1,
+              rol: 'MENCION',
+            })),
+          }),
+        ],
+      },
+      new Set(Array.from({ length: 12 }, (_, i) => i + 1)),
+    );
+
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      // Doce veces el mismo tipo son UN jugador, no ocho: primero dedup.
+      expect(r.notas[0].jugadores).toHaveLength(1);
+      expect(r.notas[1].jugadores).toHaveLength(8);
+      expect(r.notas[1].jugadores[7].playerId).toBe(8);
+    }
+  });
+
   it('descarta la nota sin titular o sin cuerpo, y con ella se puede caer la edición', () => {
     const conPortada = validarEdicion(
       {

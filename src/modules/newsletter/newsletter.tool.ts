@@ -3,33 +3,56 @@ import type Anthropic from '@anthropic-ai/sdk';
 /** Tope de notas por edición. Diez ya es un diario gordo. */
 export const MAX_NOTAS = 10;
 
+/** Tope de jugadores por nota. Más de ocho caras no entran en una ilustración. */
+export const MAX_JUGADORES_POR_NOTA = 8;
+
 /**
  * La única forma en que el modelo publica.
  *
- * `strict: true` hace que la API garantice la FORMA del input: que venga
- * `notas`, que cada nota tenga las cinco claves obligatorias, que `seccion` y
- * `rol` sean uno de los literales del enum, que no haya claves de más. Eso es
- * lo que evita tener que parsear prosa buscando un JSON.
+ * ## Qué garantiza `strict: true` y qué no — verificado contra la API
  *
- * **Lo que NO garantiza son los largos ni los topes de array.** El subconjunto
- * de JSON Schema que la API acepta para structured outputs excluye las
- * restricciones de string y las de array complejas: el normalizador del propio
- * SDK (`transform-json-schema.ts`) conserva `type`, `properties`, `required`,
- * `additionalProperties`, `items` y `minItems` sólo cuando vale 0 o 1, y
- * degrada el resto a texto de descripción. Y ese normalizador corre en el
- * camino de los helpers: un `Anthropic.Tool` crudo como este viaja tal cual.
+ * Garantiza la FORMA: que venga `notas`, que cada nota tenga las cinco claves
+ * obligatorias, que `seccion` y `rol` sean uno de los literales del enum, que no
+ * haya claves de más. Eso es lo que evita tener que parsear prosa buscando un
+ * JSON.
  *
- * O sea que `maxLength`, `maxItems` y `minItems: 1` acá valen como pista para
- * el modelo, no como contrato. El que hace cumplir los topes de las columnas es
- * `edition.validator.ts`, que recorta. Ahí también viven las reglas que ningún
- * schema puede expresar: que haya exactamente una portada, que los playerId
- * existan y que no se repitan dentro de una nota.
+ * **`maxItems` NO ESTÁ SOPORTADO Y LA API RECHAZA LA REQUEST.** No es una
+ * sospecha: se probó contra la API real y devuelve
  *
- * Se dejan declarados igual porque son documentación que el modelo lee y porque
- * el día que la API los soporte empiezan a valer sin tocar nada. Riesgo abierto
- * para el dry-run: si la API los RECHAZA con 400 en vez de ignorarlos, el
- * diario no publica nunca — es lo primero que hay que mirar en la primera
- * llamada real.
+ *     400 invalid_request_error
+ *     tools.0.custom: For 'array' type, property 'maxItems' is not supported
+ *
+ * O sea que con `maxItems` en el schema el diario **no publica nunca**: falla la
+ * primera llamada del cron, y la del día siguiente, y todas. No con una edición
+ * fea sino con una excepción a las cinco de la mañana. Por eso no está.
+ *
+ * Se probaron las cuatro variantes para acotar el arreglo al mínimo: el único
+ * que rompe es `maxItems`. `maxLength` y `minItems` la API los acepta.
+ *
+ * **Pero aceptado no es lo mismo que aplicado.** El subconjunto de JSON Schema
+ * de structured outputs excluye las restricciones de string, y el normalizador
+ * del propio SDK (`transform-json-schema`) las degrada a texto de descripción —
+ * y ese normalizador ni siquiera corre acá, porque un `Anthropic.Tool` crudo
+ * como este viaja tal cual. `maxLength` vale como pista para el modelo, no como
+ * contrato.
+ *
+ * ## Entonces, dónde viven los topes de verdad
+ *
+ * En `edition.validator.ts`, que recorta: los tres largos, las diez notas y los
+ * ocho jugadores. Ahí también viven las reglas que ningún schema puede
+ * expresar: que haya exactamente una portada, que los playerId existan y que no
+ * se repitan dentro de una nota.
+ *
+ * ## Si alguna vez agregás una propiedad nueva al schema
+ *
+ * El error de la API reporta SOLO la primera propiedad no soportada que
+ * encuentra, así que puede haber otra atrás. Después de tocar esto, hacé una
+ * llamada real antes de darlo por bueno. Y si aparece una nueva rechazada, el
+ * criterio es el mismo que se usó acá: sacarla del schema, ponerla en prosa en
+ * el `description`, y hacerla cumplir en el validador.
+ *
+ * NO vuelvas a agregar `maxItems` "para que el schema quede completo". Está
+ * probado que rompe.
  */
 export const PUBLICAR_EDICION_TOOL: Anthropic.Tool = {
   name: 'publicarEdicion',
@@ -45,7 +68,13 @@ export const PUBLICAR_EDICION_TOOL: Anthropic.Tool = {
       notas: {
         type: 'array',
         minItems: 1,
-        maxItems: MAX_NOTAS,
+        // El tope va en prosa porque `maxItems` hace que la API rechace la
+        // herramienta entera. El validador lo hace cumplir recortando.
+        description:
+          'Las notas de la edición, como máximo diez. Diez ya es un diario ' +
+          'gordo: cinco o seis bien elegidas es lo normal. Va exactamente una ' +
+          'nota de sección PORTADA, ni cero ni dos. Si mandás más de diez, se ' +
+          'publican las diez primeras y el resto se pierde.',
         items: {
           type: 'object',
           additionalProperties: false,
@@ -69,7 +98,11 @@ export const PUBLICAR_EDICION_TOOL: Anthropic.Tool = {
             cuerpo: { type: 'string', maxLength: 1600 },
             jugadores: {
               type: 'array',
-              maxItems: 8,
+              description:
+                'Los jugadores de la nota, como máximo ocho, cada uno una ' +
+                'sola vez y con un solo rol. Si mandás más de ocho se ' +
+                'conservan los ocho primeros; si repetís a alguien se ' +
+                'unifica en su rol más fuerte.',
               items: {
                 type: 'object',
                 additionalProperties: false,
