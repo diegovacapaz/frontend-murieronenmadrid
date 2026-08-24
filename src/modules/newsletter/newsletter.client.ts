@@ -23,6 +23,28 @@ export interface Generacion {
   outputTokens: number;
   cacheWriteTokens: number;
   cacheReadTokens: number;
+  /** Cuántas vueltas del bucle hicieron falta hasta publicar. */
+  turnos: number;
+  /**
+   * Lo que el modelo corrió en el sandbox, en orden.
+   *
+   * No se persiste ni se le muestra a nadie del grupo: existe para el dry-run,
+   * que es donde se afina el prompt. Es la única señal directa de si el manual
+   * está funcionando — un modelo que abre el historial y cuenta es un diario
+   * con números ciertos; uno que ejecuta dos veces y escribe es uno que estimó.
+   * Sin esto habría que leer la salida buscando cifras y verificarlas a mano.
+   */
+  ejecuciones: EjecucionDeCodigo[];
+}
+
+/** Una ejecución de código del sandbox, vista desde afuera. */
+export interface EjecucionDeCodigo {
+  /** `bash_code_execution` o `text_editor_code_execution`. */
+  herramienta: string;
+  /** El comando de shell, o el `<verbo> <path>` del editor de archivos. */
+  comando: string;
+  /** El contenido, cuando el editor crea o reemplaza un archivo. */
+  contenido: string | null;
 }
 
 /** El beta que habilita la Files API. Va en el upload Y en cada mensaje. */
@@ -226,7 +248,7 @@ export class NewsletterClient {
     let outputTokens = 0;
     let cacheWriteTokens = 0;
     let cacheReadTokens = 0;
-    let ejecucionesDeCodigo = 0;
+    const ejecuciones: EjecucionDeCodigo[] = [];
     let yaReintento = false;
 
     for (let turno = 0; turno < NewsletterClient.MAX_TURNOS; turno += 1) {
@@ -260,9 +282,11 @@ export class NewsletterClient {
       // ese nombre pero los bloques que devuelve vienen con el nombre del
       // sub-comando —`bash_code_execution` y `text_editor_code_execution`—, así
       // que la comparación exacta cuenta siempre cero.
-      ejecucionesDeCodigo += response.content.filter(
-        (bloque) => bloque.type === 'server_tool_use' && bloque.name.includes('code_execution'),
-      ).length;
+      for (const bloque of response.content) {
+        if (bloque.type === 'server_tool_use' && bloque.name.includes('code_execution')) {
+          ejecuciones.push(NewsletterClient.aEjecucion(bloque));
+        }
+      }
 
       this.logger.log(
         `Turno ${turno + 1}/${NewsletterClient.MAX_TURNOS}: ${response.stop_reason ?? 'sin stop_reason'} · ` +
@@ -290,7 +314,7 @@ export class NewsletterClient {
           this.avisarSiElCacheNoPego(turno, cacheReadTokens);
           this.logger.log(
             `Edición generada en ${turno + 1} turno(s): ${validado.notas.length} notas, ` +
-              `${ejecucionesDeCodigo} ejecución(es) de código · ` +
+              `${ejecuciones.length} ejecución(es) de código · ` +
               `in ${inputTokens} · out ${outputTokens} · ` +
               `cache_w ${cacheWriteTokens} · cache_r ${cacheReadTokens}`,
           );
@@ -302,6 +326,8 @@ export class NewsletterClient {
             outputTokens,
             cacheWriteTokens,
             cacheReadTokens,
+            turnos: turno + 1,
+            ejecuciones,
           };
         }
 
@@ -376,6 +402,31 @@ export class NewsletterClient {
     throw new NewsletterGenerationError(
       `Se agotaron los ${NewsletterClient.MAX_TURNOS} turnos sin publicar`,
     );
+  }
+
+  /**
+   * Un `server_tool_use` del sandbox, aplanado a algo imprimible.
+   *
+   * El `input` viene como `unknown` y su forma depende del sub-comando: la
+   * shell trae `command` con la línea entera, y el editor trae `command` con el
+   * verbo (`create`, `view`, `str_replace`), `path` con el archivo y a veces
+   * `file_text` con el contenido. Se leen con acceso indexado y sin asumir
+   * ninguna: un campo que no está queda en cadena vacía, no rompe la corrida.
+   *
+   * El contenido se recorta: un script de análisis entra holgado en 6000
+   * caracteres y lo que pase de ahí es un archivo de datos que nadie va a leer.
+   */
+  private static aEjecucion(bloque: Anthropic.Beta.BetaServerToolUseBlock): EjecucionDeCodigo {
+    const input = (bloque.input ?? {}) as Record<string, unknown>;
+    const verbo = typeof input.command === 'string' ? input.command : '';
+    const path = typeof input.path === 'string' ? input.path : '';
+    const texto = typeof input.file_text === 'string' ? input.file_text : null;
+
+    return {
+      herramienta: bloque.name,
+      comando: [verbo, path].filter((parte) => parte !== '').join(' '),
+      contenido: texto === null ? null : texto.slice(0, 6000),
+    };
   }
 
   /**

@@ -3,6 +3,7 @@ import {
   ArticlePlayer,
   Edition,
   EditionSummary,
+  LastEdition,
 } from '../entities/edition.entity';
 import { ArticleSection, PlayerRole } from '../enums/newsletter.enums';
 import {
@@ -10,7 +11,9 @@ import {
   ArticlePlayerDB,
   EditionDB,
   EditionSummaryDB,
+  LastEditionDB,
 } from '../interfaces/database';
+import type { DossierEstado } from '../interfaces/dossier';
 
 /**
  * Arma las entidades del diario desde las filas de la base.
@@ -60,6 +63,31 @@ export class NewsletterFactory {
       displayName: db.displayName,
       photo: db.photo,
       role: db.role as PlayerRole,
+    };
+  }
+
+  /**
+   * La edición anterior vista por el flujo de generación: puntero y foto.
+   *
+   * El único trabajo real es el `snapshot`. La columna es JSON y el typeCast
+   * del pool la entrega YA PARSEADA, así que acá no se hace `JSON.parse` —
+   * hacerlo tiraría un "[object Object] is not valid JSON" el día que el diario
+   * publique por segunda vez, que es el peor momento para enterarse.
+   *
+   * Y se castea en vez de validarse: `DossierEstado` es en su mayoría `unknown`
+   * a propósito (son las respuestas de los SP sin tocar), así que no hay una
+   * forma que chequear. Lo que sí se chequea, y vale más, es el
+   * `snapshotVersion`: si no coincide con el de hoy, el prompt le avisa al
+   * modelo que las dos fotos no son comparables campo a campo.
+   */
+  static toLastEdition(db: LastEditionDB): LastEdition {
+    return {
+      editionId: db.editionId,
+      editionNumber: db.editionNumber,
+      publishedOn: db.publishedOn,
+      lastMatchId: db.lastMatchId,
+      snapshotVersion: db.snapshotVersion,
+      snapshot: (db.snapshot as DossierEstado | null) ?? null,
     };
   }
 

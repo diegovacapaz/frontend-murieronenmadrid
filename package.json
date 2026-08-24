@@ -12,7 +12,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "format": "prettier --write \"src/**/*.ts\"",
-    "db:seed": "node scripts/seed.mjs"
+    "db:seed": "node scripts/seed.mjs",
+    "newsletter:dryrun": "nest build && node dist/newsletter-dryrun.js"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.120.0",
