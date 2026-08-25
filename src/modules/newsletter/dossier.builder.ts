@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { DatabaseService } from '../../database/database.service';
 import type { Row, RowDataPacket } from '../../database/database.types';
 import { MIN_MATCHES_FOR_RANKING } from '../stats/stats.service';
+import { fechaDeHoy } from './helpers/fecha';
 import type { Dossier, DossierEstado, HistorialPartido } from './interfaces/dossier';
 import { MIN_AGAINST, MIN_TOGETHER, SNAPSHOT_VERSION } from './newsletter.constants';
 
@@ -169,7 +170,7 @@ export class DossierBuilder {
       },
       historial,
       contexto: {
-        fecha: new Date().toISOString().slice(0, 10),
+        fecha: fechaDeHoy(),
         // MAX(matchId), NO el último del historial. El historial viene ordenado
         // por `playedAt, matchId`, y las dos cosas coinciden solo mientras nadie
         // cargue un partido con fecha retroactiva — que `CreateMatch` y

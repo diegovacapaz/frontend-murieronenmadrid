@@ -72,12 +72,24 @@ export interface INewsletterRepository {
   /**
    * La edición publicada inmediatamente ANTES de `date`, o null si no hubo.
    *
-   * Existe por `regenerar`: reescribir la edición del martes tiene que diffear
-   * contra la foto del lunes, no contra la última que haya. Usar
-   * `findLastEdition()` ahí compararía la edición contra sí misma —o contra una
-   * posterior— y el diario reportaría cambios que ya había contado, o ninguno.
+   * Existe por `regenerar`: reescribir la edición del martes cuando no pasó
+   * nada nuevo tiene que diffear contra la foto del lunes, no contra la última
+   * que haya. Usar `findLastEdition()` ahí compararía la edición contra sí
+   * misma —o contra una posterior— y el diario reportaría cambios que ya había
+   * contado, o ninguno.
    */
   findEditionBefore(date: string): Promise<LastEdition | null>;
+
+  /**
+   * La edición publicada EN `date`, o null si ese día no salió ninguna.
+   *
+   * Trae el puntero y la foto, no las notas: es la lectura que le pregunta a
+   * una edición "¿hasta dónde contaste, y cómo estaba el mundo cuando lo
+   * contaste?". La usa `regenerar` para dos cosas de una: chequear que la
+   * fecha exista, y quedarse con la foto contra la que va a diffear si desde
+   * entonces se cargaron partidos.
+   */
+  findEditionOn(date: string): Promise<LastEdition | null>;
 
   /**
    * `MAX(matchId)` de la tabla de partidos, o null si no hay ninguno.
