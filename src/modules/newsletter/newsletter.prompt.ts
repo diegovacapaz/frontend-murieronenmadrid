@@ -126,9 +126,11 @@ QUÉ HAY EN EL DOSSIER
 · historial — EL ARCHIVO historial.json DEL SANDBOX: todos los partidos, del
   más viejo al más nuevo, con su torneo, la fecha en ISO, la cancha, si fue
   superclásico, qué equipo ganó, el margen de gol, las dos formaciones con el
-  nombre con el que se conoce a cada jugador, y wasTracked (ver más abajo: en
-  false, el partido no se cuenta como historia). Es el sustrato: todo lo que no
-  está precalculado sale de acá.
+  nombre con el que se conoce a cada jugador, wasTracked (ver más abajo: en
+  false, el partido no se cuenta como historia) y notes, que casi siempre es
+  null y de vez en cuando trae lo que el administrador anotó de esa tarde (ver
+  LAS NOTAS DE UN PARTIDO, en QUÉ BUSCAR). Es el sustrato: todo lo que no está
+  precalculado sale de acá.
 
 · estado.general — la histórica: totales del sistema, cruces entre equipos, la
   vitrina de campeones, la línea de torneos, los mejores por winrate, los
@@ -369,6 +371,25 @@ aparecen en ninguna tabla:
 · el que subió cinco puestos en la tabla sin que nadie lo note;
 · el que juega siempre del mismo lado y el día que lo cambiaron de equipo.
 
+LAS NOTAS DE UN PARTIDO
+
+Algunos partidos traen notas del administrador, escritas al cargarlos: qué pasó
+esa tarde adentro de la cancha. Que llovía. Que faltaron dos y jugaron cinco
+contra seis. Que alguien se agarró con el arquero. Es lo único que ninguna
+consulta puede deducir — los números tienen el resultado, la nota tiene la
+tarde. Vienen en el campo notes de cada partido del historial, y en casi todos
+es null.
+
+Son MATERIAL DE COLOR, NO DATOS. Un partido con notas no es más importante que
+uno sin ellas ni merece una nota por tenerlas: la noticia se sigue eligiendo por
+lo que pasó. Lo que cambia es cómo la contás si el partido que elegiste, además,
+trae una.
+
+Y no la repitas: usala. Si dice "llovía toda la tarde", la crónica no dice
+"llovía toda la tarde" — dice que el 4 a 0 se jugó en un barrial. De la nota
+sale la escena, no la frase. Si la nota se lee tal cual en el diario publicado,
+la desperdiciaste.
+
 Y esto es una orden, no un permiso: SI ENCONTRÁS ALGO QUE NO ESTÁ EN ESTA LISTA
 Y ES MÁS GRACIOSO, CONTÁ ESO. La lista es un piso, no un techo. La mejor nota
 del diario es siempre la que a nadie se le había ocurrido buscar, y la única
@@ -414,8 +435,16 @@ const COMO_ESCRIBIS = `CÓMO ESCRIBÍS
   indiscutido", "dejó todo en la cancha", "y el resto es historia". Si una frase
   podría estar en cualquier diario hablando de cualquier partido, borrala.
 · No adornes un dato flojo. Si no pasó gran cosa, la nota es corta o no existe.
-· SI UNA SECCIÓN NO TIENE MATERIAL, NO SE ESCRIBE. Un diario flaco y filoso es
-  mejor que uno gordo y tibio. Tres notas buenas le ganan a ocho tibias.
+· SI UNA SECCIÓN NO TIENE MATERIAL, NO SE ESCRIBE. Nunca inventes una nota para
+  llenar un casillero vacío.
+· PERO CONTALO TODO. El grupo abre este diario para enterarse de lo que pasó, y
+  lo que no escribís no se entera nadie. Si hay diez historias de verdad,
+  escribí diez notas. Si hay quince, quince. El límite es el material, no un
+  número que vos te pongas: la única razón para dejar algo afuera es que sea
+  flojo, nunca que ya llevás varias.
+· Las dos reglas de arriba no se contradicen. Un diario largo lleno de historias
+  reales es exactamente lo que se busca; uno largo de relleno, no. Antes de
+  cerrar la edición, preguntate qué quedó sin contar.
 · No repitas los titulares de las ediciones anteriores, ni con otras palabras.
   Te llegan en el contexto justamente para eso.
 

@@ -1,7 +1,7 @@
 import type Anthropic from '@anthropic-ai/sdk';
 
 /** Tope de notas por edición. Diez ya es un diario gordo. */
-export const MAX_NOTAS = 10;
+export const MAX_NOTAS = 16;
 
 /** Tope de jugadores por nota. Más de ocho caras no entran en una ilustración. */
 export const MAX_JUGADORES_POR_NOTA = 8;

@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { MAX_NOTAS } from '../newsletter.tool';
 import { validarEdicion } from './edition.validator';
 
 const VALIDOS = new Set([7, 12]);
@@ -185,18 +186,20 @@ describe('validarEdicion', () => {
    * corriera antes de subirla al frente, una portada más allá del puesto diez
    * se perdería y la edición se rechazaría entera.
    */
-  it('recorta a diez notas y la portada sobrevive aunque viniera más allá del tope', () => {
-    const veinticinco = [
-      ...Array.from({ length: 24 }, (_, i) =>
+  it('recorta al tope de notas y la portada sobrevive aunque viniera más allá', () => {
+    const demasiadas = [
+      ...Array.from({ length: MAX_NOTAS + 9 }, (_, i) =>
         nota({ seccion: 'BREVES', titular: `Breve ${i}` }),
       ),
       nota({ seccion: 'PORTADA', titular: 'Portada' }),
     ];
 
-    const r = validarEdicion({ notas: veinticinco }, VALIDOS);
+    const r = validarEdicion({ notas: demasiadas }, VALIDOS);
     expect(r.ok).toBe(true);
     if (r.ok) {
-      expect(r.notas).toHaveLength(10);
+      // Contra la constante, no contra un número escrito acá: cuando MAX_NOTAS
+      // subió de 10 a 16, este test falló por el motivo equivocado.
+      expect(r.notas).toHaveLength(MAX_NOTAS);
       expect(r.notas[0].titular).toBe('Portada');
       expect(r.notas[1].titular).toBe('Breve 0');
     }
