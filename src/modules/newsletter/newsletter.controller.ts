@@ -94,30 +94,52 @@ export class NewsletterController {
       'Tarda entre 8 y 14 minutos: responde 202 y avisa por socket al terminar.',
   })
   @ApiResponse({ status: 202, description: 'Generación encolada' })
-  @ApiResponse({ status: 409, description: 'Ya hay una generación en curso' })
+  @ApiResponse({
+    status: 409,
+    description:
+      'Ya hay una generación en curso, el diario está apagado, o la edición de ' +
+      'hoy ya se publicó (para reescribirla está `regenerate`).',
+  })
   @ApiBearerAuth()
   @ResponseMessage('Generando la edición. Va a aparecer sola cuando esté.')
   @HttpCode(202)
-  generateNow(): void {
-    this.newsletterService.publicarAhoraEnSegundoPlano();
+  // El `await` NO espera la generación —eso son catorce minutos—: espera los dos
+  // SELECT que deciden si arranca. Sin él, un pedido que rebota igual contestaría
+  // 202 y "va a aparecer sola cuando esté", y el 409 moriría en el log.
+  generateNow(): Promise<void> {
+    return this.newsletterService.publicarAhoraEnSegundoPlano();
   }
 
+  /**
+   * Igual que `generateNow`, y por el mismo motivo: son los mismos 8 a 14
+   * minutos, así que tampoco puede devolver la edición terminada. Antes lo
+   * intentaba y el proxy cortaba la conexión a mitad de camino, así que el
+   * botón terminaba siempre en un error aunque del otro lado la edición se
+   * reescribiera bien.
+   */
   @Post('editions/:date/regenerate')
   @ApiOperation({
-    summary: 'Regenerar una edición',
+    summary: 'Regenerar una edición (solo admin)',
     description:
-      'Reescribe todas las notas de esa fecha. Usa el snapshot de la edición ' +
-      'anterior como "antes" y el estado de ahora como "después", así que si en ' +
-      'el medio se cargó otro partido la edición nueva también va a hablar de ' +
-      'ese. Las notas editadas a mano se pierden. El número de edición no cambia.',
+      'Reescribe todas las notas de esa fecha. El "después" es el estado de ' +
+      'ahora; el "antes" depende de si se cargaron partidos desde que salió esa ' +
+      'edición: si los hay, es el snapshot de ella misma —o sea que el diario ' +
+      'nuevo cuenta esos partidos como la novedad—, y si no, el de la edición ' +
+      'anterior, y sale la misma historia contada de nuevo. Las notas editadas a ' +
+      'mano se pierden. El número de edición no cambia. Tarda entre 8 y 14 ' +
+      'minutos: responde 202 y avisa por socket al terminar.',
   })
+  @ApiResponse({ status: 202, description: 'Regeneración encolada' })
   @ApiResponse({ status: 404, description: 'No hubo edición ese día' })
+  @ApiResponse({
+    status: 409,
+    description: 'Ya hay una generación en curso, o el diario está apagado',
+  })
   @ApiBearerAuth()
-  @ResponseMessage('Edición regenerada')
-  regenerate(
-    @Param('date', ParseIsoDatePipe) date: string,
-  ): Promise<EditionResponseDto> {
-    return this.newsletterService.regenerar(date);
+  @ResponseMessage('Regenerando la edición. Se actualiza sola cuando esté.')
+  @HttpCode(202)
+  regenerate(@Param('date', ParseIsoDatePipe) date: string): Promise<void> {
+    return this.newsletterService.regenerarEnSegundoPlano(date);
   }
 
   @Patch('articles/:articleId')

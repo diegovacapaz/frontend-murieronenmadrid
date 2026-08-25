@@ -141,23 +141,35 @@ export class NewsletterRepository implements INewsletterRepository {
    * `findLatest`: la fecha es lo que el lector entiende por "la última".
    */
   async findLastEdition(): Promise<LastEdition | null> {
-    return this.db.withConnection((conn) => this.leerEdicionAnterior(conn, null));
+    return this.db.withConnection((conn) => this.leerFoto(conn, null));
   }
 
   /**
-   * La edición inmediatamente anterior a una fecha. La usa `regenerar`.
+   * La edición de esa fecha exacta, con su puntero y su foto.
    *
-   * Es la MISMA consulta que `findLastEdition` con un WHERE de más, y por eso
-   * comparten cuerpo: son la misma pregunta —"¿contra qué foto me comparo?"—
-   * hecha desde dos puntos distintos de la línea de tiempo. Dos copias del SQL
-   * serían dos lugares donde acordarse del `DATE_FORMAT`.
+   * No es `findByDate`: aquélla trae las notas para dibujarlas en pantalla,
+   * ésta trae el puntero y el snapshot, que es lo que se lee para decidir
+   * contra qué compararse. La misma tabla, dos preguntas distintas.
+   */
+  async findEditionOn(date: string): Promise<LastEdition | null> {
+    return this.db.withConnection((conn) => this.leerFoto(conn, date, '='));
+  }
+
+  /**
+   * La edición inmediatamente anterior a una fecha. La usa `regenerar` cuando
+   * no hay material nuevo que contar.
    *
-   * El `<` es estricto a propósito: la edición de esa misma fecha es la que se
-   * está reescribiendo, así que compararse contra ella sería compararse contra
-   * uno mismo y no reportar ningún cambio.
+   * El `<` es estricto a propósito: deja afuera la edición que se está
+   * reescribiendo, así que el diario vuelve a contar la misma historia —mejor
+   * redactada, con otras notas— en vez de un diff contra sí mismo que no
+   * reportaría ningún cambio.
+   *
+   * Cuando SÍ se cargaron partidos desde que salió esa edición, `regenerar`
+   * usa `findEditionOn` en su lugar: ahí la foto de la propia edición es
+   * justamente el "antes" que hace falta. La decisión vive en el service.
    */
   async findEditionBefore(date: string): Promise<LastEdition | null> {
-    return this.db.withConnection((conn) => this.leerEdicionAnterior(conn, date));
+    return this.db.withConnection((conn) => this.leerFoto(conn, date));
   }
 
   /**
@@ -565,17 +577,23 @@ export class NewsletterRepository implements INewsletterRepository {
   }
 
   /**
-   * El cuerpo compartido de `findLastEdition` y `findEditionBefore`.
+   * El cuerpo compartido de las tres lecturas de foto: `findLastEdition` (sin
+   * fecha), `findEditionBefore` (`<`) y `findEditionOn` (`=`).
+   *
+   * Las tres hacen la misma pregunta —"¿cuál es el puntero y la foto de tal
+   * edición?"— parada en tres puntos distintos de la línea de tiempo. Tres
+   * copias del SQL serían tres lugares donde acordarse del `DATE_FORMAT`.
    *
    * El `DATE_FORMAT` NO es cosmético y no se puede sacar: ver la nota de
    * `findLastEdition`.
    */
-  private async leerEdicionAnterior(
+  private async leerFoto(
     conn: PoolConnection,
-    antesDe: string | null,
+    fecha: string | null,
+    operador: '<' | '=' = '<',
   ): Promise<LastEdition | null> {
-    const filtro = antesDe === null ? '' : 'WHERE e.publishedOn < ?';
-    const parametros: string[] = antesDe === null ? [] : [antesDe];
+    const filtro = fecha === null ? '' : `WHERE e.publishedOn ${operador} ?`;
+    const parametros: string[] = fecha === null ? [] : [fecha];
 
     const [filas] = await conn.execute<LastEditionDB[] & RowDataPacket[]>(
       `SELECT e.editionId, e.editionNumber,

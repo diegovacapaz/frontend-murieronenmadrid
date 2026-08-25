@@ -13,6 +13,7 @@ import { EditionResponseDto, EditionSummaryDto } from './dto/edition-response.dt
 import type { UpdateArticleDto } from './dto/update-article.dto';
 import type { UpdateConfigDto } from './dto/update-config.dto';
 import type { Article, Edition, LastEdition, NewsletterConfigRow } from './entities/edition.entity';
+import { fechaDeHoy } from './helpers/fecha';
 import type { Dossier } from './interfaces/dossier';
 import type {
   DatosEdicion,
@@ -43,6 +44,61 @@ export function hayNovedades(
 ): boolean {
   if (maxMatchId === null) return false;
   return maxMatchId > (lastMatchId ?? 0);
+}
+
+/**
+ * ¿Ya se publicó la edición de esa fecha?
+ *
+ * `NewsletterEditions` tiene un UNIQUE en `publishedOn`, así que dos ediciones
+ * del mismo día son imposibles. Lo que hace falta es enterarse ANTES y no
+ * después: el INSERT es lo último que pasa en `generarYPublicar`, o sea que un
+ * choque contra ese UNIQUE se cobra los catorce minutos y los USD 2,50 de la
+ * llamada a la API para después tirar todo. Es exactamente lo que pasó el día
+ * del deploy: la inaugural salió a la mañana y el botón, apretado de nuevo a la
+ * tarde, gastó una generación entera para morir en el INSERT.
+ *
+ * Alcanza con mirar la ÚLTIMA edición y no hace falta una consulta nueva: si
+ * existe una edición de hoy, es la última —el `ORDER BY publishedOn DESC` no
+ * puede devolver otra cosa, porque no se insertan fechas futuras—, y los dos
+ * caminos que publican ya la tienen leída para saber contra qué diffear.
+ *
+ * Va exportada aparte de la clase por el mismo motivo que `hayNovedades`: es
+ * lógica pura y así se testea sin levantar el contenedor de Nest.
+ */
+export function yaHayEdicionDe(fecha: string, anterior: LastEdition | null): boolean {
+  return anterior?.publishedOn === fecha;
+}
+
+/**
+ * ¿Se cargaron partidos DESPUÉS de que saliera esta edición?
+ *
+ * Es lo que decide contra qué foto se compara una regeneración, y es la misma
+ * pregunta que el cron le hace al mundo todas las madrugadas, hecha ahora sobre
+ * una edición puntual: su `lastMatchId` es exactamente hasta dónde contó.
+ *
+ * ## Por qué el "antes" de regenerar no puede ser siempre el mismo
+ *
+ * Regenerar sirve para dos cosas distintas, y quieren fotos distintas:
+ *
+ *   · **No me gustó cómo quedó redactada.** No pasó nada nuevo; lo que se
+ *     quiere es la MISMA historia mejor contada. El "antes" tiene que seguir
+ *     siendo la foto de la edición anterior, o el diario se compararía contra
+ *     sí mismo y no tendría nada que reportar.
+ *   · **Cargué un partido y quiero el diario al día ahora.** Ahí el "antes"
+ *     correcto es la foto de la PROPIA edición: es el estado del mundo tal como
+ *     estaba cuando salió, o sea justo antes del partido nuevo. Compararse
+ *     contra la edición anterior volvería a contar lo que esta ya contó.
+ *
+ * Elegir por el puntero resuelve las dos sin pedirle al usuario que declare
+ * cuál está haciendo, y además deja la operación repetible: la primera
+ * regeneración adelanta `lastMatchId` hasta el partido nuevo, así que la
+ * segunda vuelve sola al primer caso y reescribe en vez de salir en blanco.
+ */
+export function hayMaterialSinContar(
+  edicion: LastEdition,
+  maxMatchId: number | null,
+): boolean {
+  return hayNovedades(maxMatchId, edicion.lastMatchId);
 }
 
 /**
@@ -169,38 +225,13 @@ export class NewsletterService {
   }
 
   /**
-   * Publica una edición AHORA, haya o no partidos nuevos.
+   * Lo que llama el endpoint: publica una edición AHORA, haya o no partidos
+   * nuevos, y vuelve enseguida.
    *
    * El guard de `hayNovedades` existe para que el cron no gaste una llamada a la
    * API todas las madrugadas sobre material ya contado. Cuando la orden viene de
    * una persona que apretó un botón, esa protección sobra: si pide una edición,
    * es porque la quiere.
-   *
-   * `isEnabled` SÍ se respeta: es la llave de corte del sistema, no una
-   * preferencia del cron.
-   *
-   * Dos diferencias con el cron, y ninguna es opcional:
-   *
-   *   · **Devuelve la edición, no `null`.** Quien apretó el botón está esperando
-   *     el resultado.
-   *   · **Los errores suben.** El cron atrapa y reintenta mañana porque no hay
-   *     nadie mirando; acá hay alguien esperando y tiene que ver qué pasó.
-   */
-  async publicarAhora(): Promise<Edition> {
-    const config = await this.newsletterRepository.findConfig();
-    if (!config.isEnabled) {
-      throw new ConflictException({
-        message: 'MurieronNews está deshabilitado en NewsletterConfig',
-        errorCode: AppErrorCode.NEWSLETTER_DISABLED,
-      });
-    }
-
-    const anterior = await this.newsletterRepository.findLastEdition();
-    return this.generarYPublicar(config, anterior);
-  }
-
-  /**
-   * Lo que llama el endpoint: arranca la generación y vuelve enseguida.
    *
    * **La generación tarda entre 8 y 14 minutos** —el turno más largo medido fue
    * de 844 segundos— y eso excede el timeout de cualquier proxy razonable. Por
@@ -208,62 +239,24 @@ export class NewsletterService {
    * evento `newsletter:published` del socket. Un botón que se queda diez minutos
    * girando y termina en un 504 es peor que no tener botón.
    *
-   * El candado se toma ACÁ y de forma sincrónica, antes de devolver: si se
-   * tomara adentro de `publicarAhora`, que es `async`, dos clicks seguidos
-   * pasarían los dos el chequeo antes de que el primero llegara a marcar nada.
+   * ## Por qué los tres rebotes pasan ANTES de encolar
+   *
+   * Devolver 202 es prometer que la generación arrancó. Los tres motivos por los
+   * que puede no arrancar —el diario apagado, otra generación en curso, la
+   * edición de hoy ya publicada— se resuelven con dos SELECT de milisegundos,
+   * así que se contestan en el momento y con un 409 que el navegador ve. Lo
+   * único que se manda al fondo es lo que de verdad tarda.
+   *
+   * Que esto sea `async` no reabre la ventana de los dos clicks: el candado se
+   * toma sincrónicamente, en la línea siguiente al chequeo y antes del primer
+   * `await`, así que sigue sin haber un punto en el que dos pedidos puedan
+   * pasar los dos. Lo que sí hace falta es soltarlo a mano si rebotamos, porque
+   * en ese camino no llega a existir ninguna promesa con `finally`.
+   *
+   * Una vez encolada, los errores ya no tienen a quién subir: la respuesta se
+   * mandó hace rato. Van al log, que es donde se los busca.
    */
-  publicarAhoraEnSegundoPlano(): void {
-    if (this.generando) {
-      throw new ConflictException({
-        message: 'Ya hay una generación en curso',
-        errorCode: AppErrorCode.NEWSLETTER_ALREADY_GENERATING,
-      });
-    }
-    this.generando = true;
-
-    void this.publicarAhora()
-      .then((edicion) =>
-        this.logger.log(`MurieronNews Nº ${edicion.editionNumber} publicada a mano`),
-      )
-      .catch((error: unknown) => {
-        const mensaje = error instanceof Error ? error.message : String(error);
-        this.logger.error(`La generación manual falló: ${mensaje}`);
-      })
-      .finally(() => {
-        this.generando = false;
-      });
-  }
-
-  /**
-   * Reescribe la edición de una fecha. Es la misma edición, no una nueva.
-   *
-   * Dos diferencias con publicar: el "antes" es el snapshot de la edición
-   * ANTERIOR a esa fecha —no el de la última que haya— y en vez de insertar
-   * reemplaza, conservando el `editionNumber`.
-   *
-   * Que exista la edición se chequea ANTES de llamar a la API y no adentro de
-   * `replaceEdition`: enterarse de que la fecha no existe después de gastar
-   * catorce minutos y USD 1,42 sería el peor momento posible.
-   *
-   * Ojo con lo que se pierde: las notas editadas a mano se van con las viejas.
-   */
-  async regenerar(date: string): Promise<Edition> {
-    const config = await this.newsletterRepository.findConfig();
-    if (!config.isEnabled) {
-      throw new ConflictException({
-        message: 'MurieronNews está deshabilitado en NewsletterConfig',
-        errorCode: AppErrorCode.NEWSLETTER_DISABLED,
-      });
-    }
-
-    const existente = await this.newsletterRepository.findByDate(date);
-    if (!existente) {
-      throw new NotFoundException({
-        message: 'Edition not found',
-        errorCode: AppErrorCode.NEWSLETTER_EDITION_NOT_FOUND,
-      });
-    }
-
+  async publicarAhoraEnSegundoPlano(): Promise<void> {
     if (this.generando) {
       throw new ConflictException({
         message: 'Ya hay una generación en curso',
@@ -273,30 +266,166 @@ export class NewsletterService {
     this.generando = true;
 
     try {
-      const anterior = await this.newsletterRepository.findEditionBefore(date);
-      const { dossier, generacion } = await this.generar(config, anterior);
+      const config = await this.newsletterRepository.findConfig();
+      if (!config.isEnabled) {
+        throw new ConflictException({
+          message: 'MurieronNews está deshabilitado en NewsletterConfig',
+          errorCode: AppErrorCode.NEWSLETTER_DISABLED,
+        });
+      }
 
-      // `publishedOn` va con la fecha PEDIDA y no con la de hoy: se está
-      // reescribiendo el diario del martes, aunque hoy sea jueves. El
-      // repositorio ubica la fila por el parámetro `date` y no toca la columna.
-      const edition = await this.newsletterRepository.replaceEdition(
-        date,
-        this.datosEdicion(date, dossier, generacion),
-      );
+      // La misma lectura que necesita `generarYPublicar` para saber contra qué
+      // diffear sirve para saber si el día está libre, así que el chequeo que
+      // evita quemar una generación no cuesta ninguna consulta extra.
+      const anterior = await this.newsletterRepository.findLastEdition();
+      const hoy = fechaDeHoy();
+      if (yaHayEdicionDe(hoy, anterior)) {
+        throw new ConflictException({
+          message: `Ya existe la edición del ${hoy}. Para reescribirla, regenerala.`,
+          errorCode: AppErrorCode.NEWSLETTER_EDITION_ALREADY_EXISTS,
+        });
+      }
 
-      this.realtime.emit(RealtimeEvent.NEWSLETTER_PUBLISHED, {
-        publishedOn: edition.publishedOn,
-      });
-
-      this.logger.log(
-        `MurieronNews Nº ${edition.editionNumber} del ${edition.publishedOn} regenerada: ` +
-          `${edition.articles.length} notas`,
-      );
-
-      return edition;
-    } finally {
+      void this.generarYPublicar(config, anterior)
+        .then((edicion) =>
+          this.logger.log(`MurieronNews Nº ${edicion.editionNumber} publicada a mano`),
+        )
+        .catch((error: unknown) => {
+          const mensaje = error instanceof Error ? error.message : String(error);
+          this.logger.error(`La generación manual falló: ${mensaje}`);
+        })
+        .finally(() => {
+          this.generando = false;
+        });
+    } catch (error) {
       this.generando = false;
+      throw error;
     }
+  }
+
+  /**
+   * Reescribe la edición de una fecha. Es la misma edición, no una nueva.
+   *
+   * Dos diferencias con publicar: el "antes" es el snapshot de la edición
+   * ANTERIOR a esa fecha —no el de la última que haya— y en vez de insertar
+   * reemplaza, conservando el `editionNumber`.
+   *
+   * Ojo con lo que se pierde: las notas editadas a mano se van con las viejas.
+   *
+   * ## Por qué esto también responde 202
+   *
+   * Regenerar cuesta los mismos 8 a 14 minutos que publicar: es la misma
+   * llamada al modelo con el mismo dossier, sólo cambia contra qué se compara y
+   * si al final se hace INSERT o UPDATE. Devolver la edición terminada en la
+   * misma conexión pedía que el navegador, el proxy y el backend aguantaran
+   * despiertos ese rato, y el eslabón que se cortaba primero era el proxy: el
+   * botón terminaba siempre en un error aunque la edición se hubiera
+   * reescrito bien del otro lado.
+   *
+   * Así que hace lo mismo que el otro: los rebotes baratos —generación en
+   * curso, diario apagado, fecha inexistente— se contestan al instante con su
+   * código HTTP, y lo que tarda se manda al fondo. La pantalla se entera por el
+   * mismo evento `newsletter:published` de siempre.
+   */
+  async regenerarEnSegundoPlano(date: string): Promise<void> {
+    if (this.generando) {
+      throw new ConflictException({
+        message: 'Ya hay una generación en curso',
+        errorCode: AppErrorCode.NEWSLETTER_ALREADY_GENERATING,
+      });
+    }
+    this.generando = true;
+
+    try {
+      const config = await this.newsletterRepository.findConfig();
+      if (!config.isEnabled) {
+        throw new ConflictException({
+          message: 'MurieronNews está deshabilitado en NewsletterConfig',
+          errorCode: AppErrorCode.NEWSLETTER_DISABLED,
+        });
+      }
+
+      // Que la fecha exista se chequea ANTES de llamar a la API y no adentro de
+      // `replaceEdition`: enterarse de que no existe después de gastar catorce
+      // minutos y USD 2,50 sería el peor momento posible.
+      //
+      // `findEditionOn` y no `findByDate` porque la misma lectura sirve para las
+      // dos cosas que hacen falta: confirmar que el día existe, y traer el
+      // puntero y la foto con los que se decide contra qué compararse. Y es más
+      // liviana: `findByDate` arrastra todas las notas con sus jugadores para
+      // dibujarlas, que acá no se miran.
+      const propia = await this.newsletterRepository.findEditionOn(date);
+      if (!propia) {
+        throw new NotFoundException({
+          message: 'Edition not found',
+          errorCode: AppErrorCode.NEWSLETTER_EDITION_NOT_FOUND,
+        });
+      }
+
+      void this.rehacerEdicion(config, propia)
+        .then((edicion) =>
+          this.logger.log(`MurieronNews Nº ${edicion.editionNumber} regenerada a mano`),
+        )
+        .catch((error: unknown) => {
+          const mensaje = error instanceof Error ? error.message : String(error);
+          this.logger.error(`La regeneración de ${date} falló: ${mensaje}`);
+        })
+        .finally(() => {
+          this.generando = false;
+        });
+    } catch (error) {
+      this.generando = false;
+      throw error;
+    }
+  }
+
+  /** El trabajo caro de regenerar, ya con los rebotes baratos atrás. */
+  private async rehacerEdicion(
+    config: NewsletterConfigRow,
+    propia: LastEdition,
+  ): Promise<Edition> {
+    const date = propia.publishedOn;
+
+    // Contra qué foto se diffea. Ver `hayMaterialSinContar`: si desde que salió
+    // esta edición se cargaron partidos, el "antes" correcto es su propia foto
+    // —el mundo tal como estaba cuando salió, o sea justo antes de esos
+    // partidos— y el diario los cuenta como la novedad que son. Si no se cargó
+    // nada, se vuelve al "antes" de siempre, la edición anterior, y lo que sale
+    // es la misma historia contada de nuevo.
+    const maxMatchId = await this.newsletterRepository.findMaxMatchId();
+    const alDia = hayMaterialSinContar(propia, maxMatchId);
+
+    const anterior = alDia
+      ? propia
+      : await this.newsletterRepository.findEditionBefore(date);
+
+    this.logger.log(
+      alDia
+        ? `Regenerando el ${date} CON material nuevo: se diffea contra su propia foto ` +
+            `(puntero en el matchId ${propia.lastMatchId}, ahora hay ${maxMatchId ?? 0})`
+        : `Regenerando el ${date} sin material nuevo: se reescribe contra la edición anterior`,
+    );
+
+    const { dossier, generacion } = await this.generar(config, anterior);
+
+    // `publishedOn` va con la fecha PEDIDA y no con la de hoy: se está
+    // reescribiendo el diario del martes, aunque hoy sea jueves. El
+    // repositorio ubica la fila por el parámetro `date` y no toca la columna.
+    const edition = await this.newsletterRepository.replaceEdition(
+      date,
+      this.datosEdicion(date, dossier, generacion),
+    );
+
+    this.realtime.emit(RealtimeEvent.NEWSLETTER_PUBLISHED, {
+      publishedOn: edition.publishedOn,
+    });
+
+    this.logger.log(
+      `MurieronNews Nº ${edition.editionNumber} del ${edition.publishedOn} regenerada: ` +
+        `${edition.articles.length} notas`,
+    );
+
+    return edition;
   }
 
   // ─── Administración ─────────────────────────────────────────────────────────
@@ -339,6 +468,23 @@ export class NewsletterService {
     config: NewsletterConfigRow,
     anterior: LastEdition | null,
   ): Promise<Edition> {
+    // ANTES de `generar`, que es lo que cuesta plata. El UNIQUE de
+    // `publishedOn` rebotaría igual el INSERT de más abajo, pero recién después
+    // de haber pagado la generación entera. Ver `yaHayEdicionDe`.
+    //
+    // Está acá y no en los dos llamadores porque es el único punto por el que
+    // pasan los dos caminos que insertan —el cron y el botón—, así que ninguno
+    // se lo puede saltear. `regenerar` no pasa por acá a propósito: reemplaza
+    // la fila de esa fecha en vez de insertar una nueva, y su UPDATE no toca el
+    // UNIQUE.
+    const hoy = fechaDeHoy();
+    if (yaHayEdicionDe(hoy, anterior)) {
+      throw new ConflictException({
+        message: `Ya existe la edición del ${hoy}. Para reescribirla, regenerala.`,
+        errorCode: AppErrorCode.NEWSLETTER_EDITION_ALREADY_EXISTS,
+      });
+    }
+
     const { dossier, generacion } = await this.generar(config, anterior);
 
     const edition = await this.newsletterRepository.insertEdition(
