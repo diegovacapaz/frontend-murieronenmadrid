@@ -10,7 +10,9 @@ import { RealtimeEvent } from '../../realtime/realtime.events';
 import { RealtimeService } from '../../realtime/realtime.service';
 import { DossierBuilder } from './dossier.builder';
 import { EditionResponseDto, EditionSummaryDto } from './dto/edition-response.dto';
-import type { Edition, LastEdition, NewsletterConfigRow } from './entities/edition.entity';
+import type { UpdateArticleDto } from './dto/update-article.dto';
+import type { UpdateConfigDto } from './dto/update-config.dto';
+import type { Article, Edition, LastEdition, NewsletterConfigRow } from './entities/edition.entity';
 import type { Dossier } from './interfaces/dossier';
 import type {
   DatosEdicion,
@@ -116,6 +118,11 @@ export class NewsletterService {
 
   async findArchive(): Promise<EditionSummaryDto[]> {
     return this.newsletterRepository.findArchive();
+  }
+
+  /** La configuración del diario. El controller la cierra con `@AdminOnly()`. */
+  async findConfig(): Promise<NewsletterConfigRow> {
+    return this.newsletterRepository.findConfig();
   }
 
   // ─── Publicación ────────────────────────────────────────────────────────────
@@ -290,6 +297,31 @@ export class NewsletterService {
     } finally {
       this.generando = false;
     }
+  }
+
+  // ─── Administración ─────────────────────────────────────────────────────────
+
+  /** Corrige una nota a mano. El repositorio marca `isEdited = true`. */
+  async updateArticle(articleId: number, dto: UpdateArticleDto): Promise<Article> {
+    return this.newsletterRepository.updateArticle(articleId, dto);
+  }
+
+  /** Borra una nota. Sus jugadores se van con ella por ON DELETE CASCADE. */
+  async deleteArticle(articleId: number): Promise<void> {
+    return this.newsletterRepository.deleteArticle(articleId);
+  }
+
+  /**
+   * Reemplaza la configuración entera. `groupLore`/`styleGuide` ausentes o
+   * vacíos se guardan como `null`: es la forma de borrarlos.
+   */
+  async updateConfig(dto: UpdateConfigDto): Promise<NewsletterConfigRow> {
+    return this.newsletterRepository.updateConfig({
+      paperName: dto.paperName,
+      groupLore: dto.groupLore ?? null,
+      styleGuide: dto.styleGuide ?? null,
+      isEnabled: dto.isEnabled,
+    });
   }
 
   // ─── El tramo compartido ────────────────────────────────────────────────────

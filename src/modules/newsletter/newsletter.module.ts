@@ -4,6 +4,7 @@ import { DossierBuilder } from './dossier.builder';
 import { NewsletterClient } from './newsletter.client';
 import { NEWSLETTER_REPOSITORY } from './newsletter.constants';
 import { NewsletterController } from './newsletter.controller';
+import { NewsletterCron } from './newsletter.cron';
 import { NewsletterRepository } from './newsletter.repository';
 import { NewsletterService } from './newsletter.service';
 
@@ -22,6 +23,10 @@ import { NewsletterService } from './newsletter.service';
     // repositorio y no hay una segunda implementación que justifique un token.
     // GlobalsService, lo único que pide, viene del GlobalsModule que es @Global.
     NewsletterClient,
+    // El cron nace acá y no se exporta: nadie más lo inyecta. Necesita estar
+    // en algún módulo para que Nest lo instancie y el `@Cron` de adentro se
+    // registre en el SchedulerRegistry que trae ScheduleModule.forRoot().
+    NewsletterCron,
   ],
   exports: [NewsletterService, DossierBuilder, NewsletterClient],
 })

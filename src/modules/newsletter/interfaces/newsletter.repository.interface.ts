@@ -1,4 +1,5 @@
 import type {
+  Article,
   Edition,
   EditionSummary,
   LastEdition,
@@ -6,6 +7,18 @@ import type {
 } from '../entities/edition.entity';
 import type { DossierEstado } from './dossier';
 import type { NotaValidada } from './validacion';
+
+/**
+ * Los campos que un admin puede corregir a mano en una nota ya publicada.
+ *
+ * Los tres opcionales porque `PATCH /articles/:id` acepta un subconjunto: el
+ * repositorio arma un UPDATE solo con lo que vino.
+ */
+export interface UpdateArticleData {
+  headline?: string;
+  standfirst?: string;
+  body?: string;
+}
 
 /**
  * Todo lo que hace falta para guardar una edición, en un solo objeto.
@@ -89,4 +102,20 @@ export interface INewsletterRepository {
    * puntero y los tokens. Si no hay edición ese día, 404.
    */
   replaceEdition(date: string, datos: DatosEdicion): Promise<Edition>;
+
+  // ─── Administración ────────────────────────────────────────────────────────
+
+  /**
+   * Corrige una nota a mano y la marca `isEdited = true`.
+   *
+   * Sólo se actualizan los campos presentes en `cambios`: un PATCH con un solo
+   * campo no toca los otros dos. 404 si el `articleId` no existe.
+   */
+  updateArticle(articleId: number, cambios: UpdateArticleData): Promise<Article>;
+
+  /** Borra una nota. Sus jugadores se van con ella por ON DELETE CASCADE. 404 si no existe. */
+  deleteArticle(articleId: number): Promise<void>;
+
+  /** Reemplaza la fila única de NewsletterConfig entera. Es un PUT, no un PATCH. */
+  updateConfig(datos: NewsletterConfigRow): Promise<NewsletterConfigRow>;
 }

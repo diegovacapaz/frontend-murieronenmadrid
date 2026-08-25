@@ -11,6 +11,7 @@ import type {
   RowDataPacket,
 } from '../../database/database.types';
 import {
+  Article,
   Edition,
   EditionSummary,
   LastEdition,
@@ -28,6 +29,7 @@ import {
 import {
   DatosEdicion,
   INewsletterRepository,
+  UpdateArticleData,
 } from './interfaces/newsletter.repository.interface';
 import type { NotaValidada } from './interfaces/validacion';
 import { RECENT_HEADLINES } from './newsletter.constants';
@@ -355,6 +357,139 @@ export class NewsletterRepository implements INewsletterRepository {
 
       return this.leerEdicion(conn, editionId);
     });
+  }
+
+  // ─── Administración ─────────────────────────────────────────────────────────
+  //
+  // Las tres son escrituras de una persona, no del flujo de generación: no hay
+  // ~60 llamadas a procedures atrás, así que ninguna necesita `withTransaction`
+  // para más que su propio UPDATE/DELETE.
+
+  /**
+   * Corrige una nota a mano. Sólo entran al UPDATE los campos que vinieron en
+   * `cambios`; `isEdited` se pone en `true` siempre, aunque el cambio sea
+   * idéntico al texto que ya tenía.
+   *
+   * El `SET` se arma dinámico porque un PATCH con un solo campo no tiene que
+   * pisar los otros dos con su propio valor releído — sería una escritura de
+   * más, y en el camino habría que traer la fila antes de poder armar el
+   * UPDATE completo.
+   */
+  async updateArticle(articleId: number, cambios: UpdateArticleData): Promise<Article> {
+    return this.db.withConnection(async (conn) => {
+      const campos: string[] = [];
+      const valores: string[] = [];
+
+      if (cambios.headline !== undefined) {
+        campos.push('headline = ?');
+        valores.push(cambios.headline);
+      }
+      if (cambios.standfirst !== undefined) {
+        campos.push('standfirst = ?');
+        valores.push(cambios.standfirst);
+      }
+      if (cambios.body !== undefined) {
+        campos.push('body = ?');
+        valores.push(cambios.body);
+      }
+      campos.push('isEdited = TRUE');
+
+      const [resultado] = await conn.execute<ResultSetHeader>(
+        `UPDATE NewsletterArticles SET ${campos.join(', ')} WHERE articleId = ?`,
+        [...valores, articleId],
+      );
+
+      if (resultado.affectedRows === 0) {
+        throw new NotFoundException({
+          message: 'Article not found',
+          errorCode: AppErrorCode.NEWSLETTER_ARTICLE_NOT_FOUND,
+        });
+      }
+
+      return this.leerArticulo(conn, articleId);
+    });
+  }
+
+  /**
+   * Borra una nota. Sus jugadores se van solos: `NewsletterArticlePlayers`
+   * cuelga de `articleId` con ON DELETE CASCADE.
+   */
+  async deleteArticle(articleId: number): Promise<void> {
+    return this.db.withConnection(async (conn) => {
+      const [resultado] = await conn.execute<ResultSetHeader>(
+        `DELETE FROM NewsletterArticles WHERE articleId = ?`,
+        [articleId],
+      );
+
+      if (resultado.affectedRows === 0) {
+        throw new NotFoundException({
+          message: 'Article not found',
+          errorCode: AppErrorCode.NEWSLETTER_ARTICLE_NOT_FOUND,
+        });
+      }
+    });
+  }
+
+  /**
+   * Reemplaza la fila única de NewsletterConfig entera. Es un PUT: los cuatro
+   * campos viajan siempre, y `groupLore`/`styleGuide` en `null` los vacía.
+   */
+  async updateConfig(datos: NewsletterConfigRow): Promise<NewsletterConfigRow> {
+    return this.db.withConnection(async (conn) => {
+      await conn.execute(
+        `UPDATE NewsletterConfig
+            SET paperName = ?, groupLore = ?, styleGuide = ?, isEnabled = ?
+          WHERE configId = 1`,
+        [datos.paperName, datos.groupLore, datos.styleGuide, datos.isEnabled],
+      );
+
+      const [filas] = await conn.execute<ConfigDB[] & RowDataPacket[]>(
+        `SELECT paperName, groupLore, styleGuide, isEnabled
+           FROM NewsletterConfig
+          WHERE configId = 1`,
+      );
+
+      const fila = filas[0];
+      if (!fila) {
+        // Inalcanzable: la fila la siembra el DDL y el CHECK impide borrarla.
+        throw new InternalServerErrorException('Falta la fila de NewsletterConfig');
+      }
+
+      return fila;
+    });
+  }
+
+  /**
+   * Una nota releída sola, con sus jugadores. La usa `updateArticle` para
+   * devolver la entidad completa sin volver a armar la edición entera.
+   */
+  private async leerArticulo(conn: PoolConnection, articleId: number): Promise<Article> {
+    const [articles] = await conn.execute<ArticleDB[] & RowDataPacket[]>(
+      `SELECT articleId, section, headline, standfirst, body, sortOrder, isEdited
+         FROM NewsletterArticles
+        WHERE articleId = ?`,
+      [articleId],
+    );
+
+    const article = articles[0];
+    if (!article) {
+      // Inalcanzable: se acaba de actualizar esta misma fila en esta conexión.
+      throw new InternalServerErrorException(`La nota ${articleId} no se pudo releer`);
+    }
+
+    const [players] = await conn.execute<ArticlePlayerDB[] & RowDataPacket[]>(
+      `SELECT ap.articleId, ap.playerId, ap.role, p.displayName, p.photo
+         FROM NewsletterArticlePlayers ap
+         INNER JOIN vPlayerDetail p ON p.playerId = ap.playerId
+        WHERE ap.articleId = ?
+        ORDER BY ap.playerId`,
+      [articleId],
+    );
+
+    return NewsletterFactory.toArticle(
+      article,
+      players.map((player) => NewsletterFactory.toArticlePlayer(player)),
+    );
   }
 
   /**
