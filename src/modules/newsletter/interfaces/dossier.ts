@@ -110,4 +110,14 @@ export interface HistorialPartido {
     team: string;
     jugadores: Array<{ playerId: number; displayName: string }>;
   }>;
+  /**
+   * Lo que el administrador anotó de esa tarde al cargar el partido: que
+   * llovía, que faltaron dos, que alguien se agarró con el arquero. `null` en
+   * la enorme mayoría de los partidos, y eso es lo normal.
+   *
+   * Va acá y no en `estado` porque describe un partido, que es dato fuente y
+   * no cambia: en el snapshot se duplicaría en cada edición sin que el diff
+   * tuviera nunca nada que reportar.
+   */
+  notes: string | null;
 }

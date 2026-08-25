@@ -6,14 +6,20 @@ import type { MatchLineupEntry } from '../interfaces/matches.repository.interfac
 
 export class MatchMapper {
   /**
-   * El partido y su convocatoria viajan juntos al repository, pero como cosas
-   * distintas: la cabecera es un Partial<Match> y la formacion es una lista
-   * plana que el SP recibe como JSON. No se arma un Match completo porque los
-   * datos de cada jugador (nombre, foto) los resuelve la base, no el cliente.
+   * El partido, su convocatoria y sus notas viajan juntos al repository, pero
+   * como cosas distintas: la cabecera es un Partial<Match>, la formacion es una
+   * lista plana que el SP recibe como JSON y las notas son un texto suelto. No
+   * se arma un Match completo porque los datos de cada jugador (nombre, foto)
+   * los resuelve la base, no el cliente.
+   *
+   * Las notas salen como `null` cuando no vinieron o vinieron en blanco: el SP
+   * trata el null y la cadena vacia igual —borra la fila— pero mandarlo
+   * explicito deja claro que "sin notas" es un valor y no un olvido.
    */
   static fromCreateDto(dto: CreateMatchDto): {
     match: Partial<Match>;
     lineup: MatchLineupEntry[];
+    notes: string | null;
   } {
     return {
       match: {
@@ -28,12 +34,14 @@ export class MatchMapper {
         playerId: player.playerId,
         team: player.team,
       })),
+      notes: MatchMapper.notas(dto.notes),
     };
   }
 
   static fromUpdateDto(dto: UpdateMatchDto): {
     match: Partial<Match>;
     lineup: MatchLineupEntry[];
+    notes: string | null;
   } {
     return {
       match: {
@@ -47,7 +55,13 @@ export class MatchMapper {
         playerId: player.playerId,
         team: player.team,
       })),
+      notes: MatchMapper.notas(dto.notes),
     };
+  }
+
+  /** Ausente, vacio o solo espacios es lo mismo: el partido no tiene notas. */
+  private static notas(notes: string | undefined): string | null {
+    return notes?.trim() ? notes.trim() : null;
   }
 
   static toResponseDto(match: Match): MatchResponseDto {

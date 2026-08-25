@@ -2,7 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { DatabaseService } from '../../database/database.service';
 import { Match } from './entities/match.entity';
 import { MatchFactory } from './helpers/match.factory';
-import { MatchDB, PlaceDB } from './interfaces/database';
+import { MatchDB, MatchNotesDB, PlaceDB } from './interfaces/database';
 import {
   IMatchesRepository,
   MatchLineupEntry,
@@ -27,7 +27,11 @@ export class MatchesRepository implements IMatchesRepository {
     return row ? MatchFactory.toObject(row) : null;
   }
 
-  async create(match: Partial<Match>, lineup: MatchLineupEntry[]): Promise<Match> {
+  async create(
+    match: Partial<Match>,
+    lineup: MatchLineupEntry[],
+    notes: string | null,
+  ): Promise<Match> {
     const row = await this.db.callSimple<MatchDB>('CreateMatch', [
       match.tournamentId,
       match.winnerTeam,
@@ -39,6 +43,9 @@ export class MatchesRepository implements IMatchesRepository {
       // forma de mandar una lista de largo variable a un procedure, que solo
       // acepta parametros escalares.
       JSON.stringify(lineup),
+      // Las notas van ULTIMAS y no en el medio: el orden de esta lista es
+      // posicional y meterlas antes correria todo lo de abajo un lugar.
+      notes,
     ]);
     return MatchFactory.toObject(row);
   }
@@ -47,6 +54,7 @@ export class MatchesRepository implements IMatchesRepository {
     matchId: number,
     match: Partial<Match>,
     lineup: MatchLineupEntry[],
+    notes: string | null,
   ): Promise<Match> {
     const row = await this.db.callSimple<MatchDB>('UpdateMatch', [
       matchId,
@@ -56,6 +64,7 @@ export class MatchesRepository implements IMatchesRepository {
       match.playedAt,
       match.isDerby,
       JSON.stringify(lineup),
+      notes,
     ]);
     return MatchFactory.toObject(row);
   }
@@ -68,5 +77,10 @@ export class MatchesRepository implements IMatchesRepository {
   async findPlaces(): Promise<string[]> {
     const rows = await this.db.callList<PlaceDB>('SearchPlaces');
     return rows.map((row) => row.place);
+  }
+
+  async findNotes(matchId: number): Promise<string> {
+    const row = await this.db.callSimple<MatchNotesDB>('GetMatchNotes', [matchId]);
+    return row.notes;
   }
 }

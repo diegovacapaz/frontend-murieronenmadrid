@@ -83,4 +83,17 @@ export class CreateMatchDto {
   @ValidateNested({ each: true })
   @Type(() => MatchPlayerDto)
   players!: MatchPlayerDto[];
+
+  @ApiPropertyOptional({
+    maxLength: 2000,
+    description:
+      'Notas del administrador sobre lo que pasó esa tarde: el clima, la ' +
+      'cancha, quién faltó, lo que ningún resultado puede contar. Solo las ' +
+      'lee el diario. Vaciarlas borra las notas del partido.',
+    example: 'Llovía toda la tarde y la cancha era un barrial.',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(2000)
+  notes?: string;
 }

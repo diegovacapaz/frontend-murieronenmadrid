@@ -74,6 +74,24 @@ CREATE TABLE IF NOT EXISTS PlayerLore (
     REFERENCES Players (playerId) ON DELETE CASCADE
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_0900_ai_ci;
 
+-- Las notas del administrador sobre un partido: que paso esa tarde adentro de
+-- la cancha. Tabla aparte y no una columna en Matches por lo mismo que
+-- PlayerLore: este archivo se reaplica entero con IF NOT EXISTS y un
+-- ALTER TABLE no, y Matches es del esquema original.
+--
+-- ON DELETE CASCADE: borrar un partido se lleva sus notas, igual que se lleva
+-- su convocatoria.
+CREATE TABLE IF NOT EXISTS MatchNotes (
+  matchId   INT      NOT NULL,
+  notes     TEXT     NOT NULL,
+  updatedAt DATETIME NOT NULL DEFAULT NOW() ON UPDATE NOW(),
+
+  PRIMARY KEY (matchId),
+
+  CONSTRAINT MatchNotes_matchId_fk FOREIGN KEY (matchId)
+    REFERENCES Matches (matchId) ON DELETE CASCADE
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_0900_ai_ci;
+
 CREATE TABLE IF NOT EXISTS NewsletterConfig (
   configId   TINYINT     NOT NULL DEFAULT 1,
   paperName  VARCHAR(60) NOT NULL DEFAULT 'MurieronNews',

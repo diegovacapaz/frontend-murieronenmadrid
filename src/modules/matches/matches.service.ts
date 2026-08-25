@@ -3,6 +3,7 @@ import { AppErrorCode } from '../../common/constants/error-codes.constants';
 import { RealtimeEvent } from '../../realtime/realtime.events';
 import { RealtimeService } from '../../realtime/realtime.service';
 import { CreateMatchDto } from './dto/create-match.dto';
+import { MatchNotesResponseDto } from './dto/match-notes.dto';
 import { MatchResponseDto } from './dto/match-response.dto';
 import { SearchMatchDto } from './dto/search-match.dto';
 import { UpdateMatchDto } from './dto/update-match.dto';
@@ -56,9 +57,9 @@ export class MatchesService {
   }
 
   async create(dto: CreateMatchDto): Promise<MatchResponseDto> {
-    const { match, lineup } = MatchMapper.fromCreateDto(dto);
+    const { match, lineup, notes } = MatchMapper.fromCreateDto(dto);
 
-    const created = await this.matchesRepository.create(match, lineup);
+    const created = await this.matchesRepository.create(match, lineup, notes);
     const response = MatchMapper.toResponseDto(created);
 
     this.realtime.emit(RealtimeEvent.MATCH_CREATED, response);
@@ -67,9 +68,9 @@ export class MatchesService {
   }
 
   async update(matchId: number, dto: UpdateMatchDto): Promise<MatchResponseDto> {
-    const { match, lineup } = MatchMapper.fromUpdateDto(dto);
+    const { match, lineup, notes } = MatchMapper.fromUpdateDto(dto);
 
-    const updated = await this.matchesRepository.update(matchId, match, lineup);
+    const updated = await this.matchesRepository.update(matchId, match, lineup, notes);
     const response = MatchMapper.toResponseDto(updated);
 
     this.realtime.emit(RealtimeEvent.MATCH_UPDATED, response);
@@ -87,6 +88,18 @@ export class MatchesService {
    */
   async findPlaces(): Promise<string[]> {
     return this.matchesRepository.findPlaces();
+  }
+
+  /**
+   * Las notas del administrador, para precargar el formulario de edición.
+   *
+   * Van por su propio endpoint y no adentro del partido porque `findOneById`
+   * es una lectura pública y estas notas no lo son: las escribe el admin para
+   * que el diario tenga con qué contar la tarde, no para que las lea el grupo.
+   * Es la misma decisión que el lore de los jugadores.
+   */
+  async findNotes(matchId: number): Promise<MatchNotesResponseDto> {
+    return { notes: await this.matchesRepository.findNotes(matchId) };
   }
 
   async remove(matchId: number): Promise<MatchResponseDto> {

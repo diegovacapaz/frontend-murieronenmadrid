@@ -19,6 +19,8 @@ interface MatchDetailDB extends Row {
   isDerby: boolean;
   /** Columna JSON; el typeCast del pool la entrega ya parseada. */
   players: Array<{ playerId: number; team: string; displayName: string }>;
+  /** De MatchNotes por LEFT JOIN: null cuando el partido no tiene notas. */
+  notes: string | null;
 }
 
 /** Lo mínimo que el builder necesita saber de un jugador para recorrerlos. */
@@ -199,6 +201,12 @@ export class DossierBuilder {
    * —foto, nombre y apellido, apodo suelto— triplicaría el historial sin
    * agregarle nada al relato.
    *
+   * El LEFT JOIN contra MatchNotes trae lo único del historial que escribió
+   * una persona: lo que pasó esa tarde adentro de la cancha. Es un LEFT y no un
+   * INNER porque casi ningún partido tiene notas, y va en esta misma consulta y
+   * no en una aparte porque es una columna más de la misma fila — pedirla por
+   * separado sería recorrer los partidos dos veces para armar el mismo objeto.
+   *
    * El JOIN contra Tournaments es por `wasTracked`, que es lo único que la
    * vista no expone y el diario necesita: sin esa columna el modelo no tiene
    * forma de distinguir un partido real de uno sintético, y termina escribiendo
@@ -211,9 +219,10 @@ export class DossierBuilder {
       const [rows] = await conn.execute<MatchDetailDB[] & RowDataPacket[]>(
         `SELECT v.matchId, v.tournamentId, v.tournamentName, t.wasTracked,
                 v.winnerTeam, v.goalsDiference, v.place, v.playedAt, v.isDerby,
-                v.players
+                v.players, n.notes
            FROM vMatchDetail v
            INNER JOIN Tournaments t ON t.tournamentId = v.tournamentId
+           LEFT JOIN MatchNotes n ON n.matchId = v.matchId
           ORDER BY v.playedAt, v.matchId`,
       );
 
@@ -230,6 +239,10 @@ export class DossierBuilder {
         winnerTeam: row.winnerTeam,
         goalsDiference: row.goalsDiference,
         equipos: DossierBuilder.equipos(row.players),
+        // `null` cuando no hay notas, no cadena vacia: ausente es ausente, y el
+        // prompt necesita poder distinguir "no se anoto nada" de "se anoto
+        // nada". Es la misma regla que el lore.
+        notes: row.notes,
       }));
     });
   }
