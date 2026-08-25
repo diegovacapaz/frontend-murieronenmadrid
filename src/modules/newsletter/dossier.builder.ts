@@ -142,7 +142,7 @@ export class DossierBuilder {
         highlights: sets[5] ?? [],
         streaks: sets[7]?.[0] ?? null,
         // Los 30, con progreso: 'U' obtenido, 'L' bloqueado, 'B' roto, y
-        // progress/target es de donde salen los anticipos ("a Tito le faltan
+        // progress/target es de donde salen los anticipos ("le faltan
         // dos partidos para el Perro Viejo"). No se filtra por estado ni se
         // tiran las columnas: un logro bloqueado con progreso es una nota.
         logros: filasLogros.map((fila) => ({
