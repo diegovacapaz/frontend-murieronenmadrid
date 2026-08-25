@@ -7,11 +7,15 @@ import {
   ParseIntPipe,
   Patch,
   Post,
+  Put,
   Query,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
+import { AdminOnly } from '../../auth/decorators/admin-only.decorator';
 import { ApiRoute, ApiTag } from '../../common/constants';
+import { ResponseMessage } from '../../common/decorators/response-message.decorator';
 import { CreatePlayerDto } from './dto/create-player.dto';
+import { PlayerLoreResponseDto, UpdatePlayerLoreDto } from './dto/player-lore.dto';
 import { PlayerResponseDto } from './dto/player-response.dto';
 import { SearchPlayerDto } from './dto/search-player.dto';
 import { TogglePlayerStateDto } from './dto/toggle-player-state.dto';
@@ -90,5 +94,36 @@ export class PlayersController {
   @ApiResponse({ status: 409, description: 'El jugador tiene historial cargado' })
   remove(@Param('id', ParseIntPipe) id: number): Promise<PlayerResponseDto> {
     return this.playersService.remove(id);
+  }
+
+  @Get(':playerId/lore')
+  @AdminOnly()
+  @ApiOperation({
+    summary: 'Notas personales de un jugador (solo admin)',
+    description:
+      'El material con el que el diario le da color a las crónicas. Es la ' +
+      'única lectura del sistema que exige token: son chistes internos sobre ' +
+      'personas reales y no tienen por qué ser públicos.',
+  })
+  @ApiResponse({ status: 401, description: 'Falta el token de admin' })
+  @ApiResponse({ status: 404, description: 'Jugador no encontrado' })
+  findLore(
+    @Param('playerId', ParseIntPipe) playerId: number,
+  ): Promise<PlayerLoreResponseDto> {
+    return this.playersService.findLore(playerId);
+  }
+
+  @Put(':playerId/lore')
+  @ApiOperation({
+    summary: 'Guardar las notas de un jugador',
+    description: 'Mandar notas vacías borra el lore.',
+  })
+  @ApiResponse({ status: 404, description: 'Jugador no encontrado' })
+  @ResponseMessage('Notas guardadas')
+  saveLore(
+    @Param('playerId', ParseIntPipe) playerId: number,
+    @Body() dto: UpdatePlayerLoreDto,
+  ): Promise<void> {
+    return this.playersService.saveLore(playerId, dto.notes);
   }
 }

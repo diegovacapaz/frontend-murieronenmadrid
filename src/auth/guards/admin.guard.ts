@@ -3,6 +3,7 @@ import { Reflector } from '@nestjs/core';
 import type { Request } from 'express';
 import { AppErrorCode } from '../../common/constants/error-codes.constants';
 import { PUBLIC_KEY } from '../decorators/public.decorator';
+import { ADMIN_ONLY_KEY } from '../decorators/admin-only.decorator';
 import { AuthService } from '../auth.service';
 
 /** Metodos que no modifican nada: cualquiera los puede ejecutar, sin token. */
@@ -17,6 +18,13 @@ const READ_ONLY_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
  * con un decorador, cualquier endpoint nuevo que alguien olvide anotar queda
  * abierto a escritura sin que nadie lo note. Con esta regla, un POST nuevo nace
  * protegido y hay que pedir permiso explicito (@Public) para abrirlo.
+ *
+ * Dos excepciones explicitas, en este orden de prioridad:
+ *   @Public()     abre un endpoint que la regla cerraria
+ *   @AdminOnly()  cierra una LECTURA que la regla abriria
+ *
+ * La segunda existe por el lore de los jugadores: es un GET que el grupo no
+ * tiene que poder leer.
  */
 @Injectable()
 export class AdminGuard implements CanActivate {
@@ -42,7 +50,14 @@ export class AdminGuard implements CanActivate {
 
     const request = context.switchToHttp().getRequest<Request>();
 
-    if (READ_ONLY_METHODS.has(request.method)) {
+    const isAdminOnly = this.reflector.getAllAndOverride<boolean>(ADMIN_ONLY_KEY, [
+      context.getHandler(),
+      context.getClass(),
+    ]);
+
+    // El orden importa: la marca gana sobre la regla del metodo. Un GET marcado
+    // como @AdminOnly cae al chequeo de token igual que un POST.
+    if (!isAdminOnly && READ_ONLY_METHODS.has(request.method)) {
       return true;
     }
 

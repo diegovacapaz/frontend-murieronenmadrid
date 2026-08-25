@@ -48,6 +48,35 @@ export class DatabaseService implements OnModuleDestroy {
     }
   }
 
+  /**
+   * Ejecuta `fn` dentro de una transaccion, con rollback garantizado.
+   *
+   * Existe porque `withConnection` no puede darlo: su `finally` libera la
+   * conexion, y si la excepcion salto con una transaccion abierta, esa conexion
+   * vuelve al pool sucia y el proximo que la tome hereda el problema. Aca el
+   * rollback pasa ANTES del release.
+   *
+   * Los errores siguen pasando por handleDatabaseError, como en withConnection:
+   * quien llama recibe una excepcion de Nest, no una de mysql2.
+   */
+  async withTransaction<T>(fn: (connection: PoolConnection) => Promise<T>): Promise<T> {
+    const connection = await this.pool.getConnection();
+    try {
+      await connection.beginTransaction();
+      const result = await fn(connection);
+      await connection.commit();
+      return result;
+    } catch (error) {
+      // El `.catch` no es descuido: si la conexion ya se cayo, el rollback
+      // tambien falla, y lo que hay que propagar es el error original —el que
+      // explica que paso— no el del rollback.
+      await connection.rollback().catch(() => undefined);
+      return handleDatabaseError(error);
+    } finally {
+      connection.release();
+    }
+  }
+
   // ─────────────────────────── Stored procedure callers ───────────────────────
 
   /**

@@ -10,8 +10,10 @@ import {
   Query,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
+import { AdminOnly } from '../../auth/decorators/admin-only.decorator';
 import { ApiRoute, ApiTag } from '../../common/constants';
 import { CreateMatchDto } from './dto/create-match.dto';
+import { MatchNotesResponseDto } from './dto/match-notes.dto';
 import { MatchResponseDto } from './dto/match-response.dto';
 import { SearchMatchDto } from './dto/search-match.dto';
 import { UpdateMatchDto } from './dto/update-match.dto';
@@ -49,6 +51,26 @@ export class MatchesController {
   @ApiResponse({ status: 404, description: 'Partido no encontrado' })
   findOneById(@Param('id', ParseIntPipe) id: number): Promise<MatchResponseDto> {
     return this.matchesService.findOneById(id);
+  }
+
+  @Get(':matchId/notes')
+  @AdminOnly()
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: 'Notas del administrador sobre un partido (solo admin)',
+    description:
+      'Lo que pasó esa tarde adentro de la cancha y ningún resultado puede ' +
+      'contar. Es material del diario, no del grupo, así que esta lectura ' +
+      'exige token — igual que el lore de los jugadores. Se cargan al dar de ' +
+      'alta o editar el partido; este endpoint solo las devuelve para ' +
+      'precargar el formulario.',
+  })
+  @ApiResponse({ status: 401, description: 'Falta el token de admin' })
+  @ApiResponse({ status: 404, description: 'Partido no encontrado' })
+  findNotes(
+    @Param('matchId', ParseIntPipe) matchId: number,
+  ): Promise<MatchNotesResponseDto> {
+    return this.matchesService.findNotes(matchId);
   }
 
   @Post()

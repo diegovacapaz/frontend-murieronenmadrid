@@ -4,6 +4,7 @@ import { EntityState, StatusAction } from '../../common/enums/entity-state.enum'
 import { RealtimeEvent } from '../../realtime/realtime.events';
 import { RealtimeService } from '../../realtime/realtime.service';
 import { CreatePlayerDto } from './dto/create-player.dto';
+import { PlayerLoreResponseDto } from './dto/player-lore.dto';
 import { PlayerResponseDto } from './dto/player-response.dto';
 import { SearchPlayerDto } from './dto/search-player.dto';
 import { UpdatePlayerDto } from './dto/update-player.dto';
@@ -109,5 +110,17 @@ export class PlayersService {
 
     this.realtime.emit(RealtimeEvent.PLAYER_DELETED, response);
     return response;
+  }
+
+  /**
+   * El 404 de jugador inexistente lo señaliza el SP, igual que en el resto del
+   * módulo: no hace falta preguntar primero si existe.
+   */
+  async findLore(playerId: number): Promise<PlayerLoreResponseDto> {
+    return { notes: await this.playersRepository.findLore(playerId) };
+  }
+
+  async saveLore(playerId: number, notes: string): Promise<void> {
+    await this.playersRepository.saveLore(playerId, notes);
   }
 }

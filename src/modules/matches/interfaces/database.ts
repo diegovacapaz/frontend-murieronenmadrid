@@ -24,3 +24,8 @@ export interface PlaceFields {
 }
 
 export interface PlaceDB extends Row, PlaceFields {}
+
+/** Shape de la fila devuelta por GetMatchNotes. */
+export interface MatchNotesDB extends Row {
+  notes: string;
+}

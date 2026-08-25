@@ -29,3 +29,8 @@ export interface PlayerFields {
  * por el typeCast del pool.
  */
 export interface PlayerDB extends Row, PlayerFields {}
+
+/** Shape de la fila devuelta por GetPlayerLore. */
+export interface PlayerLoreDB extends Row {
+  notes: string;
+}

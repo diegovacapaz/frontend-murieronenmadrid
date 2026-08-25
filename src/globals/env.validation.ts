@@ -1,5 +1,6 @@
 import { plainToInstance, Type } from 'class-transformer';
 import {
+  IsBooleanString,
   IsNumber,
   IsOptional,
   IsString,
@@ -74,6 +75,36 @@ export class EnvironmentVariables {
     message: 'ADMIN_TOKEN_EXPIRES_IN debe tener formato ms (ej: 900s, 15m, 12h, 7d)',
   })
   ADMIN_TOKEN_EXPIRES_IN: string = '12h';
+
+  /**
+   * Credencial de la API de Anthropic. OJO: no es la suscripción de Claude.ai
+   * ni la de Claude Code — son productos con facturación separada. Esta sale de
+   * la Console (console.anthropic.com) y se paga con créditos de API.
+   */
+  @IsString()
+  @MinLength(10)
+  ANTHROPIC_API_KEY!: string;
+
+  /**
+   * Modelo con el que se escribe el diario. Está acá y no clavado en el código
+   * para poder cambiarlo sin deployar.
+   *
+   * Costo medido con Sonnet 5 sobre la base real (68 partidos, 27 jugadores):
+   * unos USD 0,63 por edición con caché de prompt, USD 1,31 sin él. Subirlo a
+   * Opus multiplica eso por cinco.
+   */
+  @IsOptional()
+  @IsString()
+  NEWSLETTER_MODEL: string = 'claude-sonnet-5';
+
+  /**
+   * Corte a nivel proceso. Es el de arriba de los dos: si esto está en false,
+   * el cron ni siquiera lee la configuración de la base. Sirve para levantar
+   * una copia del backend sin que empiece a gastar plata.
+   */
+  @IsOptional()
+  @IsBooleanString()
+  NEWSLETTER_ENABLED: string = 'true';
 }
 
 export function validate(config: Record<string, unknown>): EnvironmentVariables {

@@ -30,6 +30,15 @@ export enum RealtimeEvent {
 
   /** Las tablas de posiciones quedaron viejas. Payload: { tournamentId | null }. */
   SCOREBOARD_INVALIDATED = 'scoreboard:invalidated',
+
+  /**
+   * Salio una edicion nueva del diario. Payload: { publishedOn }.
+   *
+   * No lleva las notas: a las cinco de la manana no hay nadie mirando, y quien
+   * tenga la app abierta va a refetchear igual. Mandar la edicion entera por
+   * socket seria pesado para un caso que casi no ocurre.
+   */
+  NEWSLETTER_PUBLISHED = 'newsletter:published',
 }
 
 /** Payload de SCOREBOARD_INVALIDATED. */

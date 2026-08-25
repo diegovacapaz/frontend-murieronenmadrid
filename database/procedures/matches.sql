@@ -44,6 +44,9 @@ DELIMITER ;
 -- -----------------------------------------------------------------------------
 -- GetMatchById
 -- -----------------------------------------------------------------------------
+-- NO devuelve las notas del administrador, y es a proposito: este SP alimenta
+-- un endpoint publico y las notas son material privado del diario. Se leen por
+-- GetMatchNotes, que sale detras de @AdminOnly().
 DROP PROCEDURE IF EXISTS GetMatchById;
 
 DELIMITER //
@@ -60,6 +63,36 @@ BEGIN
             place, playedAt, isDerby, players
         FROM vMatchDetail
         WHERE matchId = pMatchId;
+    END IF;
+END //
+DELIMITER ;
+
+-- -----------------------------------------------------------------------------
+-- GetMatchNotes — lo que paso esa tarde adentro de la cancha
+-- -----------------------------------------------------------------------------
+-- Devuelve siempre una fila: cadena vacia si el partido no tiene notas. Asi el
+-- formulario de admin no tiene que distinguir "no existe" de "esta vacio", que
+-- para el es lo mismo.
+--
+-- Señaliza 404 si el partido no existe, porque pedir las notas de un partido
+-- que no esta es un error del cliente, no una nota vacia.
+DROP PROCEDURE IF EXISTS GetMatchNotes;
+
+DELIMITER //
+CREATE PROCEDURE GetMatchNotes(
+    pMatchId INT
+)
+BEGIN
+    IF (pMatchId IS NULL) OR (pMatchId < 1) THEN
+        SIGNAL SQLSTATE '45000' SET MYSQL_ERRNO = 46000,
+            MESSAGE_TEXT = 'Identificador de partido invalido';
+    ELSEIF NOT EXISTS (SELECT 1 FROM Matches WHERE matchId = pMatchId) THEN
+        SIGNAL SQLSTATE '45001' SET MYSQL_ERRNO = 46300,
+            MESSAGE_TEXT = 'El partido no existe';
+    ELSE
+        SELECT COALESCE(
+            (SELECT notes FROM MatchNotes WHERE matchId = pMatchId), ''
+        ) AS notes;
     END IF;
 END //
 DELIMITER ;
@@ -92,7 +125,8 @@ CREATE PROCEDURE CreateMatch(
     pPlace          VARCHAR(40),
     pPlayedAt       DATETIME,
     pIsDerby        BOOLEAN,
-    pPlayers        JSON
+    pPlayers        JSON,
+    pNotes          TEXT
 )
 BEGIN
     DECLARE vMatchId    INT;
@@ -156,6 +190,11 @@ BEGIN
     INSERT INTO MatchPlayers (playerId, matchId, tournamentId, team)
     SELECT playerId, vMatchId, pTournamentId, team FROM tmpLineup;
 
+    -- Adentro de la transaccion: si el partido no se crea, las notas tampoco.
+    IF (pNotes IS NOT NULL) AND (TRIM(pNotes) <> '') THEN
+        INSERT INTO MatchNotes (matchId, notes) VALUES (vMatchId, TRIM(pNotes));
+    END IF;
+
     COMMIT;
 
     DROP TEMPORARY TABLE IF EXISTS tmpLineup;
@@ -188,7 +227,8 @@ CREATE PROCEDURE UpdateMatch(
     pPlace          VARCHAR(40),
     pPlayedAt       DATETIME,
     pIsDerby        BOOLEAN,
-    pPlayers        JSON
+    pPlayers        JSON,
+    pNotes          TEXT
 )
 BEGIN
     DECLARE vTournamentId INT;
@@ -259,6 +299,15 @@ BEGIN
 
     INSERT INTO MatchPlayers (playerId, matchId, tournamentId, team)
     SELECT playerId, pMatchId, vTournamentId, team FROM tmpLineup;
+
+    -- Notas vacias BORRAN la fila, como en UpsertPlayerLore: asi "tiene notas"
+    -- es una sola pregunta y el dossier no filtra cadenas vacias.
+    IF (pNotes IS NULL) OR (TRIM(pNotes) = '') THEN
+        DELETE FROM MatchNotes WHERE matchId = pMatchId;
+    ELSE
+        INSERT INTO MatchNotes (matchId, notes) VALUES (pMatchId, TRIM(pNotes))
+        ON DUPLICATE KEY UPDATE notes = VALUES(notes);
+    END IF;
 
     COMMIT;
 
