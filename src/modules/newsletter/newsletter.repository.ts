@@ -182,7 +182,7 @@ export class NewsletterRepository implements INewsletterRepository {
     return this.db.withConnection(async (conn) => {
       const [filas] = await conn.execute<
         { maxMatchId: number | null }[] & RowDataPacket[]
-      >(`SELECT MAX(matchId) AS maxMatchId FROM Matches`);
+      >(`SELECT MAX(matchId) AS maxMatchId FROM vPlayedMatches`);
 
       return filas[0]?.maxMatchId ?? null;
     });

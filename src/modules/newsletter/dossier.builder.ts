@@ -352,7 +352,7 @@ export class DossierBuilder {
   private async maxMatchId(): Promise<number> {
     return this.db.withConnection(async (conn) => {
       const [rows] = await conn.execute<MaxMatchIdDB[] & RowDataPacket[]>(
-        `SELECT COALESCE(MAX(matchId), 0) AS maxMatchId FROM Matches`,
+        `SELECT COALESCE(MAX(matchId), 0) AS maxMatchId FROM vPlayedMatches`,
       );
 
       return rows[0]?.maxMatchId ?? 0;

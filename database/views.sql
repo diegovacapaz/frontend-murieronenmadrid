@@ -21,6 +21,23 @@
 -- =============================================================================
 
 -- -----------------------------------------------------------------------------
+-- vPlayedMatches / vPlayedMatchPlayers — solo lo que ya se jugo
+-- -----------------------------------------------------------------------------
+-- Un partido en preparacion (P) o listo (R) existe pero no cuenta para nada.
+-- Toda consulta de calculo que antes leia Matches o MatchPlayers directo lee
+-- estas dos vistas: el filtro esta escrito una sola vez y no hay forma de
+-- olvidarlo en un SP nuevo si se copia el patron.
+CREATE OR REPLACE VIEW vPlayedMatches AS
+SELECT m.*
+FROM Matches m
+WHERE m.state = 'J';
+
+CREATE OR REPLACE VIEW vPlayedMatchPlayers AS
+SELECT mp.*
+FROM MatchPlayers mp
+INNER JOIN Matches m ON m.matchId = mp.matchId AND m.state = 'J';
+
+-- -----------------------------------------------------------------------------
 -- vMatchPlayerResults — el partido visto desde cada jugador
 -- -----------------------------------------------------------------------------
 -- Matches guarda el margen sin signo y de que lado cayo (winnerTeam). Un jugador
@@ -47,7 +64,9 @@ SELECT
     ELSE -m.goalsDiference
   END AS goalsDiference
 FROM MatchPlayers mp
-INNER JOIN Matches m ON m.matchId = mp.matchId;
+-- Solo partidos jugados: uno en preparacion (P) o listo (R) no suma en nada, y
+-- como todo el calculo cuelga de esta vista, el filtro vive aca.
+INNER JOIN Matches m ON m.matchId = mp.matchId AND m.state = 'J';
 
 -- -----------------------------------------------------------------------------
 -- vPlayerTournamentTotals — PJ/G/E/P y diferencia de un jugador en un torneo
@@ -357,12 +376,14 @@ LEFT JOIN (
          CAST(COUNT(*)         AS SIGNED) AS matchesCount,
          CAST(SUM(isDerby = 1) AS SIGNED) AS derbiesCount
   FROM Matches
+  WHERE state = 'J'
   GROUP BY tournamentId
 ) mt ON mt.tournamentId = t.tournamentId
 LEFT JOIN (
-  SELECT tournamentId, CAST(COUNT(DISTINCT playerId) AS SIGNED) AS playersCount
-  FROM MatchPlayers
-  GROUP BY tournamentId
+  SELECT mp.tournamentId, CAST(COUNT(DISTINCT mp.playerId) AS SIGNED) AS playersCount
+  FROM MatchPlayers mp
+  INNER JOIN Matches m ON m.matchId = mp.matchId AND m.state = 'J'
+  GROUP BY mp.tournamentId
 ) mp ON mp.tournamentId = t.tournamentId
 LEFT JOIN (
   SELECT tournamentId, CAST(COUNT(*) AS SIGNED) AS penaltiesCount
@@ -1172,6 +1193,7 @@ WITH tracked AS (
   FROM Matches m
   INNER JOIN Tournaments t ON t.tournamentId = m.tournamentId
   WHERE t.wasTracked = TRUE
+    AND m.state = 'J'
 ),
 debut AS (
   SELECT mp.playerId, MIN(tr.playedAt) AS debutAt
@@ -1253,7 +1275,8 @@ SELECT
     PARTITION BY m.tournamentId ORDER BY m.playedAt, m.matchId
   ) AS SIGNED) AS matchday,
   CAST(COUNT(*) OVER (PARTITION BY m.tournamentId) AS SIGNED) AS matchdays
-FROM Matches m;
+FROM Matches m
+WHERE m.state = 'J';
 
 -- -----------------------------------------------------------------------------
 -- vTournamentMatchdayStandings — la tabla acumulada tras cada fecha
@@ -1320,7 +1343,7 @@ FROM (
     SELECT md.tournamentId, md.matchday, md.matchdays, md.playedAt, md.matchId, ro.playerId
     FROM vTournamentMatchdays md
     INNER JOIN (
-      SELECT DISTINCT tournamentId, playerId FROM MatchPlayers
+      SELECT DISTINCT tournamentId, playerId FROM vMatchPlayerResults
     ) ro ON ro.tournamentId = md.tournamentId
   ) grid
   INNER JOIN Tournaments t

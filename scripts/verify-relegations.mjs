@@ -355,7 +355,8 @@ async function setUpSandbox(connection) {
       winnerTeam CHAR(1) NULL,
       goalsDiference INT NOT NULL DEFAULT 0,
       isDerby TINYINT(1) NOT NULL DEFAULT 0,
-      place VARCHAR(40) NULL
+      place VARCHAR(40) NULL,
+      state CHAR(1) NOT NULL DEFAULT 'J'
     )`);
   await connection.query(`
     CREATE TABLE MatchPlayers (
