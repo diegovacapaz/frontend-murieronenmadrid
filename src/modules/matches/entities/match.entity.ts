@@ -1,14 +1,26 @@
 import { Team } from '../../teams/enums/team.enum';
+import { MatchState } from '../enums/match-state.enum';
 
 /** Un jugador dentro de la convocatoria, con lo justo para pintarlo. */
 export class MatchPlayer {
   playerId!: number;
-  team!: Team;
+  /** null solo en un partido en preparacion. */
+  team!: Team | null;
   firstName!: string;
   secondName!: string;
   nickname!: string | null;
   displayName!: string;
   photo!: string | null;
+}
+
+/**
+ * Un random: juega pero no es jugador de la base. Nunca suma nada; se guarda
+ * para que la ficha y el diario lo puedan nombrar.
+ */
+export class MatchGuest {
+  guestId!: number;
+  name!: string;
+  team!: Team | null;
 }
 
 /**
@@ -28,7 +40,9 @@ export class Match {
   place!: string;
   playedAt!: Date;
   isDerby!: boolean;
+  state!: MatchState;
   players!: MatchPlayer[];
+  guests!: MatchGuest[];
 
   isDraw(): boolean {
     return this.winnerTeam === null;

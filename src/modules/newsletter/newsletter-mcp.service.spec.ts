@@ -255,7 +255,7 @@ describe('NewsletterMcpService.publicar', () => {
 
     await servicio.publicar(draftId, notasValidas);
 
-    const datos = repo.insertEdition.mock.calls[0]![0] as {
+    const datos = repo.insertEdition.mock.calls[0][0] as {
       snapshot: { general: { marca: string } };
       lastMatchId: number;
     };
@@ -290,8 +290,8 @@ describe('NewsletterMcpService.publicar', () => {
   });
 
   it.each([
-    ['sin portada', [{ ...notasValidas[0]!, seccion: 'TORNEO' }]],
-    ['con dos portadas', [notasValidas[0]!, notasValidas[0]!]],
+    ['sin portada', [{ ...notasValidas[0], seccion: 'TORNEO' }]],
+    ['con dos portadas', [notasValidas[0], notasValidas[0]]],
   ])('EDICIÓN INVÁLIDA (%s): error con el motivo, no escribe y el borrador sigue vivo', async (_caso, notas) => {
     const { servicio, repo } = armar();
     const { draftId } = await servicio.iniciar();
@@ -308,7 +308,7 @@ describe('NewsletterMcpService.publicar', () => {
     const { draftId } = await servicio.iniciar();
     const conFantasma = [
       {
-        ...notasValidas[0]!,
+        ...notasValidas[0],
         jugadores: [
           { playerId: 1, rol: 'HEROE' },
           { playerId: 9999, rol: 'MENCION' },

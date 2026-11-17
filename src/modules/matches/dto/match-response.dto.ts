@@ -1,12 +1,13 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Team } from '../../teams/enums/team.enum';
+import { MatchState } from '../enums/match-state.enum';
 
 export class MatchPlayerResponseDto {
   @ApiProperty()
   playerId!: number;
 
-  @ApiProperty({ enum: Team })
-  team!: Team;
+  @ApiPropertyOptional({ enum: Team, nullable: true, description: 'null solo en preparacion' })
+  team!: Team | null;
 
   @ApiProperty()
   firstName!: string;
@@ -22,6 +23,17 @@ export class MatchPlayerResponseDto {
 
   @ApiPropertyOptional({ nullable: true })
   photo!: string | null;
+}
+
+export class MatchGuestResponseDto {
+  @ApiProperty()
+  guestId!: number;
+
+  @ApiProperty()
+  name!: string;
+
+  @ApiPropertyOptional({ enum: Team, nullable: true })
+  team!: Team | null;
 }
 
 export class MatchResponseDto {
@@ -49,6 +61,12 @@ export class MatchResponseDto {
   @ApiProperty()
   isDerby!: boolean;
 
+  @ApiProperty({ enum: MatchState, description: 'P preparacion, R listo, J jugado' })
+  state!: MatchState;
+
   @ApiProperty({ type: [MatchPlayerResponseDto] })
   players!: MatchPlayerResponseDto[];
+
+  @ApiProperty({ type: [MatchGuestResponseDto], description: 'Los randoms. Nunca suman.' })
+  guests!: MatchGuestResponseDto[];
 }

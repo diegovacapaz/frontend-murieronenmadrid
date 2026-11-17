@@ -62,7 +62,7 @@ describe('registrarHerramientasDelPowerade', () => {
     const resultado = await client.callTool({ name: 'powerade_iniciar', arguments: { tournamentId: 6 } });
 
     expect(servicio.iniciar).toHaveBeenCalledWith(6);
-    const texto = (resultado.content as Array<{ text: string }>)[0]!.text;
+    const texto = (resultado.content as Array<{ text: string }>)[0].text;
     expect(JSON.parse(texto)).toEqual({ draftId: 'abc', torneo: { nombre: 'T' } });
   });
 
@@ -85,7 +85,7 @@ describe('registrarHerramientasDelPowerade', () => {
     });
 
     expect(servicio.material).toHaveBeenCalledWith('abc', 'historial', 3);
-    expect((resultado.content as Array<{ text: string }>)[0]!.text).toBe('[{"matchId":1}]');
+    expect((resultado.content as Array<{ text: string }>)[0].text).toBe('[{"matchId":1}]');
   });
 
   it('powerade_publicar delega con el draftId y el top3 tal cual', async () => {
@@ -113,6 +113,6 @@ describe('registrarHerramientasDelPowerade', () => {
     });
 
     expect(resultado.isError).toBe(true);
-    expect((resultado.content as Array<{ text: string }>)[0]!.text).toBe('Corregí la frase del puesto 2.');
+    expect((resultado.content as Array<{ text: string }>)[0].text).toBe('Corregí la frase del puesto 2.');
   });
 });

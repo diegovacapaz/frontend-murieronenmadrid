@@ -93,7 +93,7 @@ function armar(
   const builder = { build: vi.fn().mockResolvedValue(dossierDe()) };
   const realtime = { emit: vi.fn() };
   const servicio = new PoweradeMcpService(
-    repo as never,
+    repo,
     newsletterService as never,
     builder as never,
     realtime as never,
@@ -143,7 +143,7 @@ describe('PoweradeMcpService.iniciar', () => {
     await servicio.iniciar();
 
     expect(repo.findMaxMatchId.mock.invocationCallOrder[0]).toBeLessThan(
-      builder.build.mock.invocationCallOrder[0]!,
+      builder.build.mock.invocationCallOrder[0],
     );
     expect(builder.build).toHaveBeenCalledWith(expect.anything(), { tournamentId: 6 });
   });

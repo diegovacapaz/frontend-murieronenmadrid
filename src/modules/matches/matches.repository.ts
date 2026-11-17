@@ -4,7 +4,10 @@ import { Match } from './entities/match.entity';
 import { MatchFactory } from './helpers/match.factory';
 import { MatchDB, MatchNotesDB, PlaceDB } from './interfaces/database';
 import {
+  FinishMatchParams,
+  GuestTeamEntry,
   IMatchesRepository,
+  MatchGuestEntry,
   MatchLineupEntry,
   SearchMatchesParams,
 } from './interfaces/matches.repository.interface';
@@ -18,6 +21,7 @@ export class MatchesRepository implements IMatchesRepository {
       params.tournamentId ?? null,
       params.isDerby ?? null,
       params.playerId ?? null,
+      params.includePending ?? false,
     ]);
     return MatchFactory.toList(rows);
   }
@@ -27,9 +31,15 @@ export class MatchesRepository implements IMatchesRepository {
     return row ? MatchFactory.toObject(row) : null;
   }
 
+  async findUpcoming(): Promise<Match[]> {
+    const rows = await this.db.callList<MatchDB>('GetUpcomingMatches');
+    return MatchFactory.toList(rows);
+  }
+
   async create(
     match: Partial<Match>,
     lineup: MatchLineupEntry[],
+    guests: MatchGuestEntry[],
     notes: string | null,
   ): Promise<Match> {
     const row = await this.db.callSimple<MatchDB>('CreateMatch', [
@@ -43,9 +53,11 @@ export class MatchesRepository implements IMatchesRepository {
       // forma de mandar una lista de largo variable a un procedure, que solo
       // acepta parametros escalares.
       JSON.stringify(lineup),
-      // Las notas van ULTIMAS y no en el medio: el orden de esta lista es
-      // posicional y meterlas antes correria todo lo de abajo un lugar.
       notes,
+      // Estado y randoms van al final: el orden de esta lista es posicional y
+      // agregarlos en el medio correria todo lo de abajo un lugar.
+      match.state,
+      JSON.stringify(guests),
     ]);
     return MatchFactory.toObject(row);
   }
@@ -54,6 +66,7 @@ export class MatchesRepository implements IMatchesRepository {
     matchId: number,
     match: Partial<Match>,
     lineup: MatchLineupEntry[],
+    guests: MatchGuestEntry[],
     notes: string | null,
   ): Promise<Match> {
     const row = await this.db.callSimple<MatchDB>('UpdateMatch', [
@@ -65,6 +78,36 @@ export class MatchesRepository implements IMatchesRepository {
       match.isDerby,
       JSON.stringify(lineup),
       notes,
+      match.state,
+      JSON.stringify(guests),
+    ]);
+    return MatchFactory.toObject(row);
+  }
+
+  async setTeams(
+    matchId: number,
+    lineup: MatchLineupEntry[],
+    guests: GuestTeamEntry[],
+  ): Promise<Match> {
+    const row = await this.db.callSimple<MatchDB>('SetMatchTeams', [
+      matchId,
+      JSON.stringify(lineup),
+      JSON.stringify(guests),
+    ]);
+    return MatchFactory.toObject(row);
+  }
+
+  async clearTeams(matchId: number): Promise<Match> {
+    const row = await this.db.callSimple<MatchDB>('ClearMatchTeams', [matchId]);
+    return MatchFactory.toObject(row);
+  }
+
+  async finish(matchId: number, params: FinishMatchParams): Promise<Match> {
+    const row = await this.db.callSimple<MatchDB>('FinishMatch', [
+      matchId,
+      params.winnerTeam,
+      params.goalsDiference,
+      params.notes,
     ]);
     return MatchFactory.toObject(row);
   }

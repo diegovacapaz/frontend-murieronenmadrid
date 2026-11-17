@@ -64,6 +64,26 @@ export class AuthService {
    * corresponde: vencido e invalido son cosas distintas para el frontend
    * (vencido = volve a entrar; invalido = algo raro pasa).
    */
+  /**
+   * ¿El header Authorization trae un token de admin valido? Nunca lanza: es
+   * para lecturas publicas que muestran mas cosas a un admin (partidos en
+   * preparacion) y para la verificacion de sesion, donde "no" es una respuesta
+   * valida y no un 401.
+   */
+  isAdminAuthorization(authorization?: string): boolean {
+    if (!authorization) return false;
+
+    const [scheme, token] = authorization.split(' ');
+    if (scheme?.toLowerCase() !== 'bearer' || !token) return false;
+
+    try {
+      this.verifyToken(token.trim());
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   verifyToken(token: string): AdminTokenPayload {
     try {
       return this.jwtService.verify<AdminTokenPayload>(token);

@@ -1,6 +1,7 @@
 import type { Row } from '../../../database/database.types';
 import type { Team } from '../../teams/enums/team.enum';
-import type { MatchPlayer } from '../entities/match.entity';
+import type { MatchGuest, MatchPlayer } from '../entities/match.entity';
+import type { MatchState } from '../enums/match-state.enum';
 
 export interface MatchFields {
   matchId: number;
@@ -11,8 +12,11 @@ export interface MatchFields {
   place: string;
   playedAt: Date;
   isDerby: boolean;
+  state: MatchState;
   /** Columna JSON armada por vMatchDetail; el typeCast del pool ya la parsea. */
   players: MatchPlayer[];
+  /** JSON de vMatchDetail. Puede llegar como string si el driver no lo parsea. */
+  guests?: MatchGuest[] | string | null;
 }
 
 export interface MatchDB extends Row, MatchFields {}
