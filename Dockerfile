@@ -15,7 +15,10 @@ WORKDIR /app
 COPY package.json package-lock.json* ./
 RUN npm ci
 
-COPY tsconfig.json nest-cli.json ./
+# tsconfig.build.json es el que `nest build` usa por defecto y el que EXCLUYE los
+# *.spec.ts. Si no viaja a la imagen, Nest cae en tsconfig.json y compila tambien
+# los tests: se hornean dentro de dist/ y, fuera de vitest, no pasan el type-check.
+COPY tsconfig.json tsconfig.build.json nest-cli.json ./
 COPY src ./src
 
 RUN npm run build
