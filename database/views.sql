@@ -319,7 +319,15 @@ SELECT
   m.place,
   m.playedAt,
   m.isDerby,
-  COALESCE(pl.players, JSON_ARRAY()) AS players
+  m.state,
+  COALESCE(pl.players, JSON_ARRAY()) AS players,
+  -- Los randoms: juegan pero no son jugadores de la base. Van aparte de
+  -- players para que nada que recorra la convocatoria los cuente por error.
+  COALESCE((
+    SELECT JSON_ARRAYAGG(JSON_OBJECT('guestId', g.guestId, 'name', g.`name`, 'team', g.team))
+    FROM MatchGuests g
+    WHERE g.matchId = m.matchId
+  ), JSON_ARRAY()) AS guests
 FROM Matches m
 INNER JOIN Tournaments t ON t.tournamentId = m.tournamentId
 LEFT JOIN (
