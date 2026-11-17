@@ -93,7 +93,16 @@ export class DossierBuilder {
 
   constructor(private readonly db: DatabaseService) {}
 
-  async build(titularesRecientes: string[]): Promise<Dossier> {
+  /**
+   * `opciones.tournamentId` arma el estado de ESE torneo en vez del "activo" (el
+   * de `startedAt` más reciente entre los que están en juego). Lo usa el
+   * Powerade, que juzga un torneo puntual; sin la opción, el comportamiento es
+   * el de siempre.
+   */
+  async build(
+    titularesRecientes: string[],
+    opciones: { tournamentId?: number } = {},
+  ): Promise<Dossier> {
     const historial = await this.historial();
     const jugadores = await this.jugadores();
     // MIN_MATCHES_FOR_RANKING (10) es el MISMO valor que usa el módulo stats.
@@ -104,7 +113,7 @@ export class DossierBuilder {
     const general = await this.db.callMulti<Row[][]>('GetGeneralStats', [
       MIN_MATCHES_FOR_RANKING,
     ]);
-    const torneoActivo = await this.torneoActivo();
+    const torneoActivo = await this.torneoActivo(opciones.tournamentId);
     const mundialito = await this.db.callMulti<Row[][]>('GetMundialitoBoard', []);
     const lore = await this.lore();
 
@@ -274,7 +283,13 @@ export class DossierBuilder {
    * `startedAt` más reciente, con el id como desempate para que la elección no
    * dependa del plan del optimizador.
    */
-  private async torneoActivo(): Promise<unknown> {
+  private async torneoActivo(tournamentId?: number): Promise<unknown> {
+    // Un torneo pedido por id no se busca: se arma tal cual, sin mirar su estado.
+    // Quien lo pide (el Powerade) ya validó que exista y que esté en juego.
+    if (tournamentId !== undefined) {
+      return this.db.callMulti<Row[][]>('GetTournamentStats', [tournamentId]);
+    }
+
     const enCurso = await this.db.withConnection(async (conn) => {
       const [rows] = await conn.execute<TorneoEnCursoDB[] & RowDataPacket[]>(
         `SELECT tournamentId

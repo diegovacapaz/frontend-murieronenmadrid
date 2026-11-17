@@ -31,6 +31,11 @@ export class NewsletterCron {
     // que empiece a gastar plata.
     if (this.globals.get('NEWSLETTER_ENABLED') !== 'true') return;
 
+    // Sin ANTHROPIC_API_KEY el diario se escribe por el MCP y el cron no tiene
+    // nada que hacer. No es un error y no se loguea nada: el cliente ya avisó una
+    // vez al arrancar.
+    if (!this.newsletterService.apiDisponible) return;
+
     for (const intento of [1, 2]) {
       try {
         const edicion = await this.newsletterService.publicarSiHayNovedades();

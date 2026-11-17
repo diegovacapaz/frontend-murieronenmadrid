@@ -10,6 +10,7 @@ import { AchievementsModule } from './modules/achievements/achievements.module';
 import { MatchesModule } from './modules/matches/matches.module';
 import { MundialitoModule } from './modules/mundialito/mundialito.module';
 import { NewsletterModule } from './modules/newsletter/newsletter.module';
+import { PoweradeModule } from './modules/powerade/powerade.module';
 import { PenaltiesModule } from './modules/penalties/penalties.module';
 import { PlayersModule } from './modules/players/players.module';
 import { ScoreboardModule } from './modules/scoreboard/scoreboard.module';
@@ -42,6 +43,7 @@ import { RealtimeModule } from './realtime/realtime.module';
     MundialitoModule,
     AchievementsModule,
     NewsletterModule,
+    PoweradeModule,
   ],
   controllers: [HealthController],
   providers: [

@@ -12,4 +12,5 @@ export enum ApiTag {
   MUNDIALITO = 'Mundialito',
   ACHIEVEMENTS = 'Achievements',
   NEWSLETTER = 'Newsletter',
+  POWERADE = 'Powerade',
 }

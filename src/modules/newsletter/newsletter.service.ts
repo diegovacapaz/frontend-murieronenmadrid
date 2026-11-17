@@ -13,6 +13,7 @@ import { EditionResponseDto, EditionSummaryDto } from './dto/edition-response.dt
 import type { UpdateArticleDto } from './dto/update-article.dto';
 import type { UpdateConfigDto } from './dto/update-config.dto';
 import type { Article, Edition, LastEdition, NewsletterConfigRow } from './entities/edition.entity';
+import { armarDatosEdicion } from './helpers/datos-edicion';
 import { fechaDeHoy } from './helpers/fecha';
 import type { Dossier } from './interfaces/dossier';
 import type {
@@ -153,6 +154,26 @@ export class NewsletterService {
     private readonly realtime: RealtimeService,
   ) {}
 
+  /** ¿Se puede escribir con la API de Anthropic? Lo lee el cron. */
+  get apiDisponible(): boolean {
+    return this.client.disponible;
+  }
+
+  /**
+   * El rebote barato de los caminos que llaman a la API, y va PRIMERO: antes del
+   * candado y de cualquier lectura. Sin `ANTHROPIC_API_KEY` el diario se escribe
+   * por el MCP, y un botón que fallara con un error opaco (o que tomara el
+   * candado y no lo soltara) sería peor que un mensaje que lo explica.
+   */
+  private exigirApiDisponible(): void {
+    if (this.client.disponible) return;
+
+    throw new ConflictException({
+      message: 'La API de Anthropic está apagada: el diario se escribe desde Claude (MCP)',
+      errorCode: AppErrorCode.NEWSLETTER_API_DISABLED,
+    });
+  }
+
   // ─── Lectura ────────────────────────────────────────────────────────────────
 
   async findLatest(): Promise<EditionResponseDto | null> {
@@ -257,6 +278,8 @@ export class NewsletterService {
    * mandó hace rato. Van al log, que es donde se los busca.
    */
   async publicarAhoraEnSegundoPlano(): Promise<void> {
+    this.exigirApiDisponible();
+
     if (this.generando) {
       throw new ConflictException({
         message: 'Ya hay una generación en curso',
@@ -328,6 +351,8 @@ export class NewsletterService {
    * mismo evento `newsletter:published` de siempre.
    */
   async regenerarEnSegundoPlano(date: string): Promise<void> {
+    this.exigirApiDisponible();
+
     if (this.generando) {
       throw new ConflictException({
         message: 'Ya hay una generación en curso',
@@ -379,19 +404,17 @@ export class NewsletterService {
     }
   }
 
-  /** El trabajo caro de regenerar, ya con los rebotes baratos atrás. */
-  private async rehacerEdicion(
-    config: NewsletterConfigRow,
-    propia: LastEdition,
-  ): Promise<Edition> {
+  /**
+   * Contra qué foto se diffea una regeneración. Lo comparten la API y el MCP.
+   *
+   * Ver `hayMaterialSinContar`: si desde que salió esta edición se cargaron
+   * partidos, el "antes" correcto es su propia foto —el mundo tal como estaba
+   * cuando salió, o sea justo antes de esos partidos— y el diario los cuenta como
+   * la novedad que son. Si no se cargó nada, se vuelve al "antes" de siempre, la
+   * edición anterior, y lo que sale es la misma historia contada de nuevo.
+   */
+  async resolverBaseDeRegeneracion(propia: LastEdition): Promise<LastEdition | null> {
     const date = propia.publishedOn;
-
-    // Contra qué foto se diffea. Ver `hayMaterialSinContar`: si desde que salió
-    // esta edición se cargaron partidos, el "antes" correcto es su propia foto
-    // —el mundo tal como estaba cuando salió, o sea justo antes de esos
-    // partidos— y el diario los cuenta como la novedad que son. Si no se cargó
-    // nada, se vuelve al "antes" de siempre, la edición anterior, y lo que sale
-    // es la misma historia contada de nuevo.
     const maxMatchId = await this.newsletterRepository.findMaxMatchId();
     const alDia = hayMaterialSinContar(propia, maxMatchId);
 
@@ -405,6 +428,18 @@ export class NewsletterService {
             `(puntero en el matchId ${propia.lastMatchId}, ahora hay ${maxMatchId ?? 0})`
         : `Regenerando el ${date} sin material nuevo: se reescribe contra la edición anterior`,
     );
+
+    return anterior;
+  }
+
+  /** El trabajo caro de regenerar, ya con los rebotes baratos atrás. */
+  private async rehacerEdicion(
+    config: NewsletterConfigRow,
+    propia: LastEdition,
+  ): Promise<Edition> {
+    const date = propia.publishedOn;
+
+    const anterior = await this.resolverBaseDeRegeneracion(propia);
 
     const { dossier, generacion } = await this.generar(config, anterior);
 
@@ -557,16 +592,11 @@ export class NewsletterService {
     dossier: Dossier,
     generacion: Generacion,
   ): DatosEdicion {
-    return {
-      publishedOn,
-      lastMatchId: dossier.contexto.ultimoMatchId,
-      snapshotVersion: dossier.estado.version,
-      snapshot: dossier.estado,
+    return armarDatosEdicion(publishedOn, dossier, generacion.notas, {
       model: generacion.model,
       inputTokens:
         generacion.inputTokens + generacion.cacheWriteTokens + generacion.cacheReadTokens,
       outputTokens: generacion.outputTokens,
-      notas: generacion.notas,
-    };
+    });
   }
 }

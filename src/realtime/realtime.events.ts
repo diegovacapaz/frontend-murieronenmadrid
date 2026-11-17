@@ -39,6 +39,15 @@ export enum RealtimeEvent {
    * socket seria pesado para un caso que casi no ocurre.
    */
   NEWSLETTER_PUBLISHED = 'newsletter:published',
+
+  /**
+   * Salio una version nueva del ranking Powerade de un torneo (o se reescribio la
+   * vigente). Payload: { tournamentId }.
+   *
+   * Lleva el torneo y no el ranking: quien tenga abierta la pantalla de ese
+   * torneo refetchea, y el resto lo ignora.
+   */
+  POWERADE_PUBLISHED = 'powerade:published',
 }
 
 /** Payload de SCOREBOARD_INVALIDATED. */
