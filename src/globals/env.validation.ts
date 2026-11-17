@@ -127,7 +127,23 @@ export class EnvironmentVariables {
   MCP_API_KEY?: string;
 }
 
-export function validate(config: Record<string, unknown>): EnvironmentVariables {
+/**
+ * Las claves OPCIONALES de cuya ausencia depende que un producto quede apagado.
+ * Vacías valen como "no configuradas": docker-compose pasa `VAR: ${VAR:-}` como
+ * cadena vacía, y `VAR=` en un .env es lo mismo. Sin esto, dejarlas en blanco hacía
+ * que el proceso muriera al arrancar por no llegar al largo mínimo.
+ *
+ * Sólo estas dos: normalizar las obligatorias cambiaría cómo se comporta el
+ * resto de la configuración sin que nadie lo haya pedido.
+ */
+const OPCIONALES_QUE_VACIAS_SON_AUSENTES = ['MCP_API_KEY', 'ANTHROPIC_API_KEY'] as const;
+
+export function validate(entrada: Record<string, unknown>): EnvironmentVariables {
+  const config = { ...entrada };
+  for (const clave of OPCIONALES_QUE_VACIAS_SON_AUSENTES) {
+    if (config[clave] === '') delete config[clave];
+  }
+
   const validatedConfig = plainToInstance(EnvironmentVariables, config, {
     enableImplicitConversion: true,
   });
