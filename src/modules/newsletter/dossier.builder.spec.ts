@@ -58,6 +58,36 @@ describe('DossierBuilder', () => {
     expect(dossier.contexto.lorePorJugador).toEqual({});
   });
 
+  /**
+   * La base falsa devuelve cero filas, o sea que "el torneo activo" no existe.
+   * Eso es lo que hace significativo el test: con un `tournamentId` explícito el
+   * builder NO tiene que buscar ninguno, y llama a `GetTournamentStats` con ese
+   * id aunque la búsqueda del activo no devolvería nada.
+   */
+  it('con tournamentId arma el estado de ESE torneo, sin buscar el activo', async () => {
+    const db = dbFalsa();
+    const builder = new DossierBuilder(db as never);
+    const consultas = builder as unknown as Consultas;
+    vi.spyOn(consultas, 'historial').mockResolvedValue([]);
+    vi.spyOn(consultas, 'jugadores').mockResolvedValue([]);
+
+    await builder.build([], { tournamentId: 7 });
+
+    expect(db.callMulti).toHaveBeenCalledWith('GetTournamentStats', [7]);
+  });
+
+  it('sin tournamentId y sin torneo en juego, no pide estadísticas de ningún torneo', async () => {
+    const db = dbFalsa();
+    const builder = new DossierBuilder(db as never);
+    const consultas = builder as unknown as Consultas;
+    vi.spyOn(consultas, 'historial').mockResolvedValue([]);
+    vi.spyOn(consultas, 'jugadores').mockResolvedValue([]);
+
+    await builder.build([]);
+
+    expect(db.callMulti).not.toHaveBeenCalledWith('GetTournamentStats', expect.anything());
+  });
+
   it('incluye una entrada por jugador, incluso sin datos', async () => {
     const { builder, consultas } = armar();
     vi.spyOn(consultas, 'historial').mockResolvedValue([]);

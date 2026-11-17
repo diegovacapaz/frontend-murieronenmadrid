@@ -80,10 +80,16 @@ export class EnvironmentVariables {
    * Credencial de la API de Anthropic. OJO: no es la suscripción de Claude.ai
    * ni la de Claude Code — son productos con facturación separada. Esta sale de
    * la Console (console.anthropic.com) y se paga con créditos de API.
+   *
+   * OPCIONAL desde que el diario puede escribirse por el MCP con la suscripción
+   * (ver MCP_API_KEY): sin ella el backend arranca igual, el cron no hace nada y
+   * el botón "Generar edición" responde un 409 que explica que el diario se
+   * escribe desde Claude. Si viene, tiene que ser una clave de verdad.
    */
+  @IsOptional()
   @IsString()
   @MinLength(10)
-  ANTHROPIC_API_KEY!: string;
+  ANTHROPIC_API_KEY?: string;
 
   /**
    * Modelo con el que se escribe el diario. Está acá y no clavado en el código
@@ -105,6 +111,20 @@ export class EnvironmentVariables {
   @IsOptional()
   @IsBooleanString()
   NEWSLETTER_ENABLED: string = 'true';
+
+  /**
+   * Clave del servidor MCP (`/mcp`), con el que Claude arma y publica el diario.
+   *
+   * Es OPCIONAL a propósito: sin ella el MCP queda apagado —`/mcp` ni siquiera
+   * existe, devuelve 404— y el backend arranca igual. Así un deploy que no la
+   * configure no expone nada. El mínimo de 32 caracteres es porque en la etapa de
+   * prueba un túnel público es lo único entre internet y la base: tiene que ser
+   * larga y aleatoria.
+   */
+  @IsOptional()
+  @IsString()
+  @MinLength(32)
+  MCP_API_KEY?: string;
 }
 
 export function validate(config: Record<string, unknown>): EnvironmentVariables {

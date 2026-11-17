@@ -14,6 +14,7 @@ import { ApiExceptionFilter } from './common/filters/api-exception.filter';
 import { ApiResponseInterceptor } from './common/interceptors/api-response.interceptor';
 import { TrimPipe } from './common/pipes/trim.pipe';
 import { GlobalsService } from './globals/globals.service';
+import { montarMcp } from './mcp/mcp.mount';
 
 const DATE_CONVENTION_DESCRIPTION =
   '**Convencion de fechas:** los campos datetime de entrada se interpretan como ' +
@@ -72,6 +73,10 @@ async function bootstrap(): Promise<void> {
 
   app.setGlobalPrefix('api');
   app.use(helmet());
+
+  // El MCP del diario. Va como middleware y antes del pipeline de Nest a
+  // propósito: ver el docstring de montarMcp. Sin MCP_API_KEY no monta nada.
+  montarMcp(app, globals);
 
   app.enableCors({
     origin: globals.corsOrigins,

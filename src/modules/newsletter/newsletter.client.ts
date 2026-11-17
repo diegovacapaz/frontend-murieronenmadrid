@@ -106,7 +106,8 @@ const BETA_FILES = 'files-api-2025-04-14';
 @Injectable()
 export class NewsletterClient {
   private readonly logger = new Logger(NewsletterClient.name);
-  private readonly anthropic: Anthropic;
+  /** `null` cuando no hay `ANTHROPIC_API_KEY`: el diario se escribe por el MCP. */
+  private readonly anthropic: Anthropic | null;
   private readonly model: string;
 
   private static readonly MAX_TURNOS = 12;
@@ -153,8 +154,36 @@ export class NewsletterClient {
   private static readonly DEADLINE_MS = 20 * 60 * 1000;
 
   constructor(private readonly globals: GlobalsService) {
-    this.anthropic = new Anthropic({ apiKey: this.globals.get('ANTHROPIC_API_KEY') });
+    // El SDK sólo se construye si hay credencial. Sin ella el backend arranca
+    // igual y el diario se escribe por el MCP; el cron y los botones lo saben por
+    // `disponible` y no llegan a pedirle nada a este cliente.
+    const apiKey = this.globals.get('ANTHROPIC_API_KEY');
+    this.anthropic = apiKey ? new Anthropic({ apiKey }) : null;
     this.model = this.globals.get('NEWSLETTER_MODEL');
+
+    if (!this.anthropic) {
+      this.logger.log(
+        'Sin ANTHROPIC_API_KEY: la API de Anthropic está apagada y el diario se escribe por el MCP',
+      );
+    }
+  }
+
+  /** ¿Se puede escribir una edición con la API? `false` sin `ANTHROPIC_API_KEY`. */
+  get disponible(): boolean {
+    return this.anthropic !== null;
+  }
+
+  /**
+   * El SDK, o un error claro si no hay credencial. Nadie debería llegar acá sin
+   * haber chequeado `disponible`; esto es la red de seguridad, no el camino.
+   */
+  private get cliente(): Anthropic {
+    if (!this.anthropic) {
+      throw new NewsletterGenerationError(
+        'No hay ANTHROPIC_API_KEY: la API de Anthropic está apagada',
+      );
+    }
+    return this.anthropic;
   }
 
   async generar(
@@ -179,7 +208,7 @@ export class NewsletterClient {
       // El archivo se borra pase lo que pase. Uno por edición, todos los días,
       // es basura que se acumula en una cuenta que nadie mira. Y el borrado no
       // puede tapar el error de arriba: si falla, se loguea y listo.
-      await this.anthropic.beta.files
+      await this.cliente.beta.files
         .delete(fileId, { betas: [BETA_FILES] })
         .catch((error: unknown) =>
           this.logger.warn(`No se pudo borrar el archivo ${fileId}: ${String(error)}`),
@@ -194,7 +223,7 @@ export class NewsletterClient {
    */
   private async subirHistorial(historial: HistorialPartido[]): Promise<string> {
     const json = JSON.stringify(historial);
-    const archivo = await this.anthropic.beta.files.upload({
+    const archivo = await this.cliente.beta.files.upload({
       file: await toFile(Buffer.from(json, 'utf8'), NewsletterClient.ARCHIVO_HISTORIAL, {
         type: 'application/json',
       }),
@@ -262,7 +291,7 @@ export class NewsletterClient {
       // un turno con ejecución de código tarda minutos —se midió uno de 517
       // segundos— contra un request HTTP que sin stream se puede cortar por
       // timeout y hacer que el SDK lo reintente, pagando el dossier de nuevo.
-      const response = await this.anthropic.beta.messages
+      const response = await this.cliente.beta.messages
         .stream({
           model: this.model,
           max_tokens: NewsletterClient.MAX_TOKENS_POR_TURNO,

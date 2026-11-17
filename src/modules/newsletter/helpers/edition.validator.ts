@@ -30,6 +30,9 @@ const PESO_ROL: Record<PlayerRole, number> = {
   [PlayerRole.MENCION]: 1,
 };
 
+/** Más largo que esto y de una sola línea, un cuerpo de BREVES ya es un párrafo y no un breve. */
+const UMBRAL_BREVE_EN_UN_PARRAFO = 280;
+
 /** Topes de las columnas de NewsletterArticles. */
 const LIMITES = { titular: 120, copete: 240, cuerpo: 16000 } as const;
 
@@ -54,16 +57,33 @@ function recortar(valor: unknown, tope: number): string {
 function jugadoresDeLaNota(
   crudos: unknown,
   playerIdsValidos: Set<number>,
+  titular: string,
+  descartes: string[],
 ): NotaValidada['jugadores'] {
   const porJugador = new Map<number, PlayerRole>();
 
   for (const crudo of Array.isArray(crudos) ? crudos : []) {
-    if (typeof crudo !== 'object' || crudo === null) continue;
+    if (typeof crudo !== 'object' || crudo === null) {
+      descartes.push(`La nota "${titular}" trae una mención que no tiene la forma esperada`);
+      continue;
+    }
     const jugador = crudo as Record<string, unknown>;
 
     const playerId = Number(jugador.playerId);
     const rol = ROLES[String(jugador.rol)];
-    if (!rol || !playerIdsValidos.has(playerId)) continue;
+    if (!rol) {
+      descartes.push(
+        `La nota "${titular}" trae un rol que no existe ("${String(jugador.rol)}") ` +
+          `para el jugador ${String(jugador.playerId)}`,
+      );
+      continue;
+    }
+    if (!playerIdsValidos.has(playerId)) {
+      descartes.push(
+        `La nota "${titular}" menciona un playerId que no existe (${String(jugador.playerId)})`,
+      );
+      continue;
+    }
 
     const previo = porJugador.get(playerId);
     if (previo === undefined || PESO_ROL[rol] > PESO_ROL[previo]) {
@@ -74,6 +94,13 @@ function jugadoresDeLaNota(
   // El tope también se recorta acá: `maxItems` hace que la API rechace la
   // herramienta entera (ver newsletter.tool.ts), así que en el schema no está y
   // el único que lo puede hacer cumplir es este.
+  if (porJugador.size > MAX_JUGADORES_POR_NOTA) {
+    descartes.push(
+      `La nota "${titular}" tiene ${porJugador.size} jugadores distintos y el máximo es ` +
+        `${MAX_JUGADORES_POR_NOTA}: se perderían los últimos`,
+    );
+  }
+
   return [...porJugador]
     .slice(0, MAX_JUGADORES_POR_NOTA)
     .map(([playerId, rol]) => ({ playerId, rol }));
@@ -117,24 +144,64 @@ export function validarEdicion(
   }
 
   const notas: NotaValidada[] = [];
+  const descartes: string[] = [];
 
   for (const cruda of crudas) {
-    if (typeof cruda !== 'object' || cruda === null) continue;
+    if (typeof cruda !== 'object' || cruda === null) {
+      descartes.push('Una de las notas no tiene la forma esperada y se tiró');
+      continue;
+    }
     const nota = cruda as Record<string, unknown>;
 
     const seccion = SECCIONES[String(nota.seccion)];
-    if (!seccion) continue;
+    if (!seccion) {
+      descartes.push(`Una nota tiene una sección que no existe ("${String(nota.seccion)}")`);
+      continue;
+    }
 
     const titular = recortar(nota.titular, LIMITES.titular);
     const cuerpo = recortar(nota.cuerpo, LIMITES.cuerpo);
-    if (titular === '' || cuerpo === '') continue;
+    if (titular === '' || cuerpo === '') {
+      descartes.push(
+        `La nota "${titular || '(sin titular)'}" se descartó por no tener titular o cuerpo`,
+      );
+      continue;
+    }
+
+    // El frontend dibuja los BREVES como lista, un punto por línea del cuerpo. Un
+    // párrafo largo de una sola línea sale como UN punto con todo adentro: no se
+    // pierde nada, pero no es lo que el diario promete. El manual lo pide, pero un
+    // manual se puede ignorar; esto lo informa para que el MCP lo haga corregir.
+    // Un breve corto de una sola línea es legítimo, por eso el umbral de largo.
+    if (seccion === ArticleSection.BREVES) {
+      const items = cuerpo.split('\n').filter((linea) => linea.trim() !== '');
+      if (items.length < 2 && cuerpo.length > UMBRAL_BREVE_EN_UN_PARRAFO) {
+        descartes.push(
+          `La nota de BREVES "${titular.slice(0, 40)}" es un solo párrafo de ${cuerpo.length} ` +
+            'caracteres: tiene que ser una lista de tres a cinco ítems cortos, uno por línea ' +
+            'y separados por una línea en blanco',
+        );
+      }
+    }
+
+    // Los textos que pasan de la columna se recortan sin decir nada; acá se anota
+    // para que quien lo quiera saber (el MCP) pueda pedir que se acorten.
+    for (const [campo, tope] of Object.entries(LIMITES)) {
+      const largo = typeof nota[campo] === 'string' ? (nota[campo] as string).trim().length : 0;
+      if (largo > tope) {
+        descartes.push(
+          `El ${campo} de la nota "${titular.slice(0, 40)}" pasa de ${tope} caracteres ` +
+            `(tiene ${largo}) y se recortaría`,
+        );
+      }
+    }
 
     notas.push({
       seccion,
       titular,
       copete: recortar(nota.copete, LIMITES.copete),
       cuerpo,
-      jugadores: jugadoresDeLaNota(nota.jugadores, playerIdsValidos),
+      jugadores: jugadoresDeLaNota(nota.jugadores, playerIdsValidos, titular, descartes),
     });
   }
 
@@ -155,5 +222,13 @@ export function validarEdicion(
   // portada. Al revés, la portada sobrevive siempre y lo que se pierde es la
   // cola, que es lo que el propio modelo dejó para el final.
   const resto = notas.filter((n) => n.seccion !== ArticleSection.PORTADA);
-  return { ok: true, notas: [...portadas, ...resto].slice(0, MAX_NOTAS) };
+  const ordenadas = [...portadas, ...resto];
+  if (ordenadas.length > MAX_NOTAS) {
+    descartes.push(
+      `Mandaste ${ordenadas.length} notas y el máximo es ${MAX_NOTAS}: se perderían las últimas ` +
+        `${ordenadas.length - MAX_NOTAS}`,
+    );
+  }
+
+  return { ok: true, notas: ordenadas.slice(0, MAX_NOTAS), descartes };
 }

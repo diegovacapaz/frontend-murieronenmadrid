@@ -17,5 +17,16 @@ export interface NotaValidada {
  * que es lo único que va a haber para entender por qué el diario no salió.
  */
 export type ResultadoValidacion =
-  | { ok: true; notas: NotaValidada[] }
+  | {
+      ok: true;
+      notas: NotaValidada[];
+      /**
+       * Todo lo que el validador cambió o tiró EN SILENCIO para que la edición
+       * pasara: menciones a jugadores que no existen, notas sin titular, textos
+       * recortados, topes. La API lo ignora (tiene un solo intento pago); el MCP
+       * lo usa para rechazar y pedirle al redactor que lo corrija, porque ahí el
+       * reintento es gratis. Está vacío cuando no se perdió nada.
+       */
+      descartes: string[];
+    }
   | { ok: false; motivo: string };

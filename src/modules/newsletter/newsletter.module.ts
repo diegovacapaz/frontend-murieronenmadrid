@@ -3,6 +3,7 @@ import { DatabaseModule } from '../../database/database.module';
 import { DossierBuilder } from './dossier.builder';
 import { NewsletterClient } from './newsletter.client';
 import { NEWSLETTER_REPOSITORY } from './newsletter.constants';
+import { NewsletterMcpService } from './newsletter-mcp.service';
 import { NewsletterController } from './newsletter.controller';
 import { NewsletterCron } from './newsletter.cron';
 import { NewsletterRepository } from './newsletter.repository';
@@ -14,6 +15,9 @@ import { NewsletterService } from './newsletter.service';
   providers: [
     { provide: NEWSLETTER_REPOSITORY, useClass: NewsletterRepository },
     NewsletterService,
+    // El servicio del MCP: arma el borrador y publica lo que escribe un cliente
+    // MCP. Se exporta porque `montarMcp` lo pide con `app.get` desde main.ts.
+    NewsletterMcpService,
     // El builder no va detrás del token del repositorio a propósito: no es un
     // repositorio. No lee una tabla del módulo para devolver entidades, sino
     // que orquesta ~60 llamadas a los procedures de otros módulos y arma con
@@ -28,6 +32,6 @@ import { NewsletterService } from './newsletter.service';
     // registre en el SchedulerRegistry que trae ScheduleModule.forRoot().
     NewsletterCron,
   ],
-  exports: [NewsletterService, DossierBuilder, NewsletterClient],
+  exports: [NewsletterService, NewsletterMcpService, DossierBuilder, NewsletterClient],
 })
 export class NewsletterModule {}

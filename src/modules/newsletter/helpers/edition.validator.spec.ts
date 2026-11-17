@@ -259,3 +259,145 @@ describe('validarEdicion', () => {
     expect(sinPortada.ok).toBe(false);
   });
 });
+
+/**
+ * `descartes`: todo lo que el validador cambió o tiró EN SILENCIO.
+ *
+ * La API lo ignora —tiene un solo intento pago y publicar con una mención menos
+ * es mejor que no publicar—. El MCP lo usa para rechazar y avisarle al redactor,
+ * porque ahí el reintento es gratis y perder un héroe (y su foto) sin que nadie
+ * se entere es peor que pedirle que lo corrija.
+ */
+describe('validarEdicion: descartes', () => {
+  const descartesDe = (notas: unknown[], validos: Set<number> = VALIDOS): string[] => {
+    const r = validarEdicion({ notas }, validos);
+    if (!r.ok) throw new Error(`se esperaba ok y vino: ${r.motivo}`);
+    return r.descartes;
+  };
+
+  it('una edición limpia no descarta nada', () => {
+    expect(
+      descartesDe([nota({ seccion: 'PORTADA', jugadores: [{ playerId: 7, rol: 'HEROE' }] })]),
+    ).toEqual([]);
+  });
+
+  it('un playerId que no existe se informa con el id y el titular de la nota', () => {
+    const descartes = descartesDe([
+      nota({
+        seccion: 'PORTADA',
+        titular: 'Cayó Nacho',
+        jugadores: [
+          { playerId: 7, rol: 'HEROE' },
+          { playerId: 9999, rol: 'MENCION' },
+        ],
+      }),
+    ]);
+
+    expect(descartes).toHaveLength(1);
+    expect(descartes[0]).toContain('9999');
+    expect(descartes[0]).toContain('Cayó Nacho');
+  });
+
+  it('un rol que no existe se informa', () => {
+    const descartes = descartesDe([
+      nota({ seccion: 'PORTADA', jugadores: [{ playerId: 7, rol: 'REY' }] }),
+    ]);
+
+    expect(descartes).toHaveLength(1);
+    expect(descartes[0]).toContain('REY');
+  });
+
+  it('una nota sin titular o sin cuerpo que se tira se informa', () => {
+    const descartes = descartesDe([
+      nota({ seccion: 'PORTADA' }),
+      nota({ seccion: 'BREVES', titular: 'Se pierde', cuerpo: '' }),
+    ]);
+
+    expect(descartes).toHaveLength(1);
+    expect(descartes[0]).toContain('Se pierde');
+  });
+
+  it('una sección que no existe se informa', () => {
+    const descartes = descartesDe([nota({ seccion: 'PORTADA' }), nota({ seccion: 'DEPORTES' })]);
+
+    expect(descartes).toHaveLength(1);
+    expect(descartes[0]).toContain('DEPORTES');
+  });
+
+  it('un titular más largo que la columna se informa antes de recortarse', () => {
+    const descartes = descartesDe([nota({ seccion: 'PORTADA', titular: 'x'.repeat(130) })]);
+
+    expect(descartes).toHaveLength(1);
+    expect(descartes[0]).toMatch(/titular/i);
+  });
+
+  it('más jugadores distintos que el tope por nota se informa', () => {
+    const muchos = new Set(Array.from({ length: 12 }, (_, i) => i + 1));
+    const descartes = descartesDe(
+      [
+        nota({
+          seccion: 'PORTADA',
+          jugadores: Array.from({ length: 12 }, (_, i) => ({ playerId: i + 1, rol: 'MENCION' })),
+        }),
+      ],
+      muchos,
+    );
+
+    expect(descartes).toHaveLength(1);
+    expect(descartes[0]).toMatch(/jugadores/i);
+  });
+
+  it('más notas que el tope se informa', () => {
+    const descartes = descartesDe([
+      nota({ seccion: 'PORTADA' }),
+      ...Array.from({ length: MAX_NOTAS + 2 }, (_, i) => nota({ titular: `Breve ${i}` })),
+    ]);
+
+    expect(descartes).toHaveLength(1);
+    expect(descartes[0]).toMatch(/notas/i);
+  });
+
+  describe('formato de los BREVES (el diario los dibuja un ítem por línea)', () => {
+    const portada = nota({ seccion: 'PORTADA' });
+
+    it('cuatro ítems separados por una línea en blanco: sin descartes', () => {
+      const cuerpo = Array.from({ length: 4 }, (_, i) => `Ítem ${i} de bastante largo. `.repeat(3).trim()).join('\n\n');
+
+      expect(descartesDe([portada, nota({ seccion: 'BREVES', cuerpo })])).toEqual([]);
+    });
+
+    it('un solo párrafo largo se informa: es un breve que no se puede dibujar como lista', () => {
+      const parrafo = 'Una frase larga que sigue y sigue sin cortar jamás. '.repeat(8).trim();
+
+      const descartes = descartesDe([portada, nota({ seccion: 'BREVES', cuerpo: parrafo })]);
+
+      expect(descartes).toHaveLength(1);
+      expect(descartes[0]).toContain('BREVES');
+      expect(descartes[0]).toMatch(/línea en blanco/);
+    });
+
+    it('un breve corto de una sola línea es legítimo: sin descartes', () => {
+      expect(descartesDe([portada, nota({ seccion: 'BREVES', cuerpo: 'Un breve corto.' })])).toEqual([]);
+    });
+
+    it('la regla es sólo de los BREVES: un párrafo largo en otra sección no se informa', () => {
+      const parrafo = 'Una frase larga que sigue y sigue sin cortar jamás. '.repeat(8).trim();
+
+      expect(descartesDe([portada, nota({ seccion: 'TORNEO', cuerpo: parrafo })])).toEqual([]);
+    });
+  });
+
+  it('nombrar dos veces al mismo jugador en una nota NO es un descarte: se unifica sin pérdida', () => {
+    expect(
+      descartesDe([
+        nota({
+          seccion: 'PORTADA',
+          jugadores: [
+            { playerId: 7, rol: 'HEROE' },
+            { playerId: 7, rol: 'MENCION' },
+          ],
+        }),
+      ]),
+    ).toEqual([]);
+  });
+});

@@ -99,8 +99,52 @@ Es la edición fundacional: la que el grupo va a citar. Trabajala como tal. Todo
 lo demás de este manual —cómo averiguás, qué buscar, cómo escribís, el tono—
 vale igual que cualquier otro día.`;
 
+/**
+ * Las tres piezas del manual que dependen de CÓMO le llega el material al
+ * redactor, y por eso son las únicas que cambian entre la API y el MCP:
+ *
+ *  · `datos` — el párrafo que dice dónde están los datos para contar;
+ *  · `itemHistorial` — cómo se nombra el historial en el mapa del dossier;
+ *  · `entregaFinal` — el párrafo que dice cómo se publica.
+ *
+ * Todo lo demás del manual —identidad, qué buscar, cómo escribís, el tono— es
+ * igual para los dos caminos.
+ */
+export interface VarianteDelManual {
+  datos: string;
+  itemHistorial: string;
+  entregaFinal: string;
+}
+
+/** Lo que necesita el manual de la configuración de la base. */
+export interface ConfigDelManual {
+  paperName: string;
+  groupLore: string | null;
+  styleGuide: string | null;
+}
+
+/**
+ * La variante de la API: el historial viaja como archivo al sandbox y se publica
+ * con la herramienta `publicarEdicion`.
+ *
+ * **No se toca sin recalcular los hashes de `newsletter.prompt.spec.ts`**: este
+ * texto es el prefijo cacheado de la API y un byte distinto lo invalida.
+ */
+export const VARIANTE_API: VarianteDelManual = {
+  datos: `Y los datos para contar YA ESTÁN EN EL SANDBOX: el historial completo viaja como
+un archivo adjunto llamado historial.json, con la lista de partidos que se
+describe abajo. Abrilo con json.load y trabajá sobre eso. NO lo vuelvas a
+tipear: ya está ahí, y copiarlo a mano cuesta una fortuna y sale mal. Cae bajo
+/files/input/, en un subdirectorio con nombre de hash, así que la forma corta de
+ubicarlo es ls /files/input/*/historial.json.`,
+  itemHistorial: 'EL ARCHIVO historial.json DEL SANDBOX',
+  entregaFinal: `Cuando tengas todas las notas escritas y verificadas con código, llamás a
+publicarEdicion UNA sola vez, con todas juntas. Es lo último que hacés. No hay
+segunda llamada ni borrador: lo que mandás es lo que el grupo lee a la mañana.`,
+};
+
 /** El historial, la ejecución de código y el mapa de lo que trae el dossier. */
-const COMO_AVERIGUA = `CÓMO AVERIGUÁS
+const comoAverigua = (variante: VarianteDelManual): string => `CÓMO AVERIGUÁS
 
 Tenés el historial COMPLETO de partidos, con las formaciones de los dos equipos
 en cada uno, y tenés una herramienta de ejecución de código. Esas dos cosas
@@ -114,16 +158,11 @@ estima leyendo. Si el código no lo confirma, la frase no se publica. Un diario
 que inventa un número deja de ser gracioso y pasa a ser mentira, y acá el que lo
 lee estuvo en la cancha y se acuerda.
 
-Y los datos para contar YA ESTÁN EN EL SANDBOX: el historial completo viaja como
-un archivo adjunto llamado historial.json, con la lista de partidos que se
-describe abajo. Abrilo con json.load y trabajá sobre eso. NO lo vuelvas a
-tipear: ya está ahí, y copiarlo a mano cuesta una fortuna y sale mal. Cae bajo
-/files/input/, en un subdirectorio con nombre de hash, así que la forma corta de
-ubicarlo es ls /files/input/*/historial.json.
+${variante.datos}
 
 QUÉ HAY EN EL DOSSIER
 
-· historial — EL ARCHIVO historial.json DEL SANDBOX: todos los partidos, del
+· historial — ${variante.itemHistorial}: todos los partidos, del
   más viejo al más nuevo, con su torneo, la fecha en ISO, la cancha, si fue
   superclásico, qué equipo ganó, el margen de gol, las dos formaciones con el
   nombre con el que se conoce a cada jugador, wasTracked (ver más abajo: en
@@ -413,7 +452,7 @@ Esto es noticia HOY, no cuando pasa. Y cuando la jornada fue floja, lo que se
 viene ES el diario: la sección ANTICIPOS existe exactamente para eso.`;
 
 /** La forma: cómo se escribe una nota y cómo se publica la edición. */
-const COMO_ESCRIBIS = `CÓMO ESCRIBÍS
+const comoEscribis = (variante: VarianteDelManual): string => `CÓMO ESCRIBÍS
 
 · Titulares cortos, de diario de verdad, sin dos puntos explicativos. "Cayó el
   invicto", no "Racha rota: perdió después de once partidos". Un titular que
@@ -479,9 +518,7 @@ Y cada jugador va UNA sola vez por nota, con un solo rol. Si alguien es el héro
 de la nota, no lo repitas más abajo como mención: la base no admite al mismo
 jugador dos veces en la misma nota.
 
-Cuando tengas todas las notas escritas y verificadas con código, llamás a
-publicarEdicion UNA sola vez, con todas juntas. Es lo último que hacés. No hay
-segunda llamada ni borrador: lo que mandás es lo que el grupo lee a la mañana.`;
+${variante.entregaFinal}`;
 
 /**
  * El bloque más delicado del archivo.
@@ -492,7 +529,7 @@ segunda llamada ni borrador: lo que mandás es lo que el grupo lee a la mañana.
  * solo una lista de prohibiciones — una lista de prohibiciones sola produce un
  * redactor asustado, que es exactamente lo que no queremos.
  */
-const EL_TONO = `EL TONO
+export const EL_TONO = `EL TONO
 
 EL LÍMITE VA PRIMERO, PORQUE NO SE NEGOCIA NI SE SUAVIZA:
 
@@ -563,7 +600,7 @@ cargada se apoya en un dato verificado y no en un adjetivo, y ninguno dice una
 sola palabra sobre la persona — todos hablan de lo que pasó en la cancha.`;
 
 /** El lore: lo único del dossier que escribió una persona. */
-const LAS_NOTAS = `LAS NOTAS DE CADA JUGADOR
+export const LAS_NOTAS = `LAS NOTAS DE CADA JUGADOR
 
 En el contexto puede haber notas escritas a mano sobre algunos jugadores,
 indexadas por playerId. No son datos: son material de comedia. Es lo que el
@@ -592,21 +629,28 @@ Si un jugador no tiene nota, no pasa nada y no se menciona: el diario se escribe
 igual con los datos. Y si hay una nota sobre el grupo entero, la vas a encontrar
 más abajo, bajo SOBRE EL GRUPO.`;
 
-export function construirSystem(
-  config: {
-    paperName: string;
-    groupLore: string | null;
-    styleGuide: string | null;
-  },
+/** El manual de la API. Es `construirSystemCon` con la variante del sandbox. */
+export function construirSystem(config: ConfigDelManual, esInaugural: boolean): string {
+  return construirSystemCon(config, esInaugural, VARIANTE_API);
+}
+
+/**
+ * Arma el manual completo con la variante de acceso a los datos que corresponda
+ * (API o MCP). Todo lo que no es una de las tres piezas de `VarianteDelManual`
+ * es idéntico para los dos.
+ */
+export function construirSystemCon(
+  config: ConfigDelManual,
   esInaugural: boolean,
+  variante: VarianteDelManual,
 ): string {
   const partes = [
     IDENTIDAD.replace('{{DIARIO}}', config.paperName),
     esInaugural ? TRABAJO_INAUGURAL : TRABAJO,
-    COMO_AVERIGUA,
+    comoAverigua(variante),
     QUE_BUSCAR,
     LO_QUE_SE_VIENE,
-    COMO_ESCRIBIS,
+    comoEscribis(variante),
     EL_TONO,
     LAS_NOTAS,
   ];

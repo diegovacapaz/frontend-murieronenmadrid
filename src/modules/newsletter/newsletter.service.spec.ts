@@ -1,6 +1,103 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { LastEdition } from './entities/edition.entity';
-import { hayMaterialSinContar, hayNovedades, yaHayEdicionDe } from './newsletter.service';
+import {
+  hayMaterialSinContar,
+  hayNovedades,
+  NewsletterService,
+  yaHayEdicionDe,
+} from './newsletter.service';
+
+describe('NewsletterService con la API de Anthropic apagada (sin ANTHROPIC_API_KEY)', () => {
+  function servicioConCliente(disponible: boolean) {
+    const repo = {
+      findConfig: vi.fn().mockResolvedValue({ paperName: 'x', groupLore: null, styleGuide: null, isEnabled: false }),
+      findLastEdition: vi.fn(),
+      findEditionOn: vi.fn(),
+    };
+    const servicio = new NewsletterService(repo as never, {} as never, { disponible } as never, {} as never);
+    return { servicio, repo };
+  }
+
+  /** El errorCode con el que sale la excepción, que es lo que traduce el frontend. */
+  async function errorCodeDe(promesa: Promise<unknown>): Promise<unknown> {
+    try {
+      await promesa;
+    } catch (error) {
+      return (error as { getResponse: () => { errorCode: string } }).getResponse().errorCode;
+    }
+    return undefined;
+  }
+
+  it('generar una edición rebota con NEWSLETTER_API_DISABLED sin tocar la base', async () => {
+    const { servicio, repo } = servicioConCliente(false);
+
+    expect(await errorCodeDe(servicio.publicarAhoraEnSegundoPlano())).toBe('NEWSLETTER_API_DISABLED');
+    expect(repo.findConfig).not.toHaveBeenCalled();
+  });
+
+  it('regenerar una edición rebota con NEWSLETTER_API_DISABLED sin tocar la base', async () => {
+    const { servicio, repo } = servicioConCliente(false);
+
+    expect(await errorCodeDe(servicio.regenerarEnSegundoPlano('2026-08-25'))).toBe('NEWSLETTER_API_DISABLED');
+    expect(repo.findConfig).not.toHaveBeenCalled();
+  });
+
+  it('el rebote no toma el candado: una segunda llamada da el mismo código y no "ya hay una generación"', async () => {
+    const { servicio } = servicioConCliente(false);
+
+    await errorCodeDe(servicio.publicarAhoraEnSegundoPlano());
+
+    expect(await errorCodeDe(servicio.publicarAhoraEnSegundoPlano())).toBe('NEWSLETTER_API_DISABLED');
+  });
+
+  it('con la API disponible el flujo sigue su camino: pasa al chequeo de la configuración', async () => {
+    const { servicio, repo } = servicioConCliente(true);
+
+    // La config está apagada en este fake: el rebote es NEWSLETTER_DISABLED, no el de la API.
+    expect(await errorCodeDe(servicio.publicarAhoraEnSegundoPlano())).toBe('NEWSLETTER_DISABLED');
+    expect(repo.findConfig).toHaveBeenCalled();
+  });
+});
+
+describe('NewsletterService.resolverBaseDeRegeneracion', () => {
+  /** El service armado a mano con fakes: sólo se usan las dos lecturas que importan. */
+  function servicioCon(maxMatchId: number | null, anteriorDeLaFecha: LastEdition | null) {
+    const repo = {
+      findMaxMatchId: vi.fn().mockResolvedValue(maxMatchId),
+      findEditionBefore: vi.fn().mockResolvedValue(anteriorDeLaFecha),
+    };
+    const servicio = new NewsletterService(
+      repo as never,
+      {} as never,
+      {} as never,
+      {} as never,
+    );
+    return { servicio, repo };
+  }
+
+  const propia = { publishedOn: '2026-08-25', lastMatchId: 314 } as LastEdition;
+  const ayer = { publishedOn: '2026-08-24', lastMatchId: 300 } as LastEdition;
+
+  it('con partidos cargados desde que salió la edición, el "antes" es su propia foto', async () => {
+    const { servicio, repo } = servicioCon(315, ayer);
+
+    await expect(servicio.resolverBaseDeRegeneracion(propia)).resolves.toBe(propia);
+    expect(repo.findEditionBefore).not.toHaveBeenCalled();
+  });
+
+  it('sin partidos nuevos, el "antes" es la edición anterior a esa fecha', async () => {
+    const { servicio, repo } = servicioCon(314, ayer);
+
+    await expect(servicio.resolverBaseDeRegeneracion(propia)).resolves.toBe(ayer);
+    expect(repo.findEditionBefore).toHaveBeenCalledWith('2026-08-25');
+  });
+
+  it('si no hubo edición anterior, no hay base', async () => {
+    const { servicio } = servicioCon(314, null);
+
+    await expect(servicio.resolverBaseDeRegeneracion(propia)).resolves.toBeNull();
+  });
+});
 
 describe('hayNovedades', () => {
   it('sin ediciones previas, cualquier partido es novedad', () => {
