@@ -29,7 +29,7 @@ export class MatchFactory {
    * por equipo (los sin equipo al final) y despues por nombre.
    */
   private static guests(raw: MatchDB['guests']): MatchGuest[] {
-    const list: MatchGuest[] = typeof raw === 'string' ? JSON.parse(raw) : (raw ?? []);
+    const list = typeof raw === 'string' ? (JSON.parse(raw) as MatchGuest[]) : (raw ?? []);
     return [...list].sort(
       (a, b) =>
         (a.team ?? '~').localeCompare(b.team ?? '~') || a.name.localeCompare(b.name, 'es'),
