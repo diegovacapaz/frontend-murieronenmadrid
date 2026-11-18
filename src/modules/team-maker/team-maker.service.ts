@@ -452,6 +452,7 @@ export class TeamMakerService {
       status: r.status,
       seats,
       candidates: r.roster.filter((e) => e.ref.kind === 'P'),
+      roster: r.roster,
       firstSeat: r.firstSeat,
       firstByDraw: r.firstByDraw,
       order,

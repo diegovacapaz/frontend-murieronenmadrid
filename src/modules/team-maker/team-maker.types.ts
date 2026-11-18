@@ -51,6 +51,8 @@ export interface TeamMakerState {
   seats: [SeatState, SeatState];
   /** Jugadores reales convocados: los que se pueden marcar como capitan. */
   candidates: PoolEntry[];
+  /** Toda la convocatoria (jugadores y randoms), para nombrar a los ya elegidos. */
+  roster: PoolEntry[];
   firstSeat: Seat | null;
   firstByDraw: boolean;
   /** De quien es cada turno, en orden. */
