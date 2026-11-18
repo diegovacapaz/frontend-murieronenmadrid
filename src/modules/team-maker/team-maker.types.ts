@@ -20,6 +20,12 @@ export interface SeatState {
   name: string | null;
   photo: string | null;
   connected: boolean;
+  /**
+   * El capitan se desconecto y paso la gracia: el lugar queda libre, pero solo
+   * lo puede volver a tomar el mismo jugador. Mientras dura la gracia es
+   * `connected: false` con `released: false` ("reconectando").
+   */
+  released: boolean;
   /** Si ya voto color. El voto en si no viaja hasta que votan los dos. */
   voted: boolean;
 }

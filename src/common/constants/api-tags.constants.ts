@@ -13,4 +13,5 @@ export enum ApiTag {
   ACHIEVEMENTS = 'Achievements',
   NEWSLETTER = 'Newsletter',
   POWERADE = 'Powerade',
+  TEAM_MAKER = 'Team maker',
 }

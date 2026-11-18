@@ -48,6 +48,17 @@ export enum RealtimeEvent {
    * torneo refetchea, y el resto lo ignora.
    */
   POWERADE_PUBLISHED = 'powerade:published',
+
+  /**
+   * Arranco, cambio o termino un team maker. Payload: { matchId, tournamentId }.
+   *
+   * Lleva solo ids: la card de la portada refetchea /matches/upcoming. El
+   * detalle en vivo (turnos, elecciones) viaja por el namespace /team-maker a
+   * quien esta mirando ese armado.
+   */
+  TEAMMAKER_STARTED = 'teammaker:started',
+  TEAMMAKER_UPDATED = 'teammaker:updated',
+  TEAMMAKER_FINISHED = 'teammaker:finished',
 }
 
 /** Payload de SCOREBOARD_INVALIDATED. */
@@ -57,4 +68,10 @@ export interface ScoreboardInvalidatedPayload {
    * un jugador). La tabla historica siempre queda invalidada.
    */
   tournamentId: number | null;
+}
+
+/** Payload de los eventos teammaker:*. */
+export interface TeamMakerEventPayload {
+  matchId: number;
+  tournamentId: number;
 }
