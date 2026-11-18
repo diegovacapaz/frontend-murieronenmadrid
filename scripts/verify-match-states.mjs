@@ -17,7 +17,7 @@
 import { createConnection } from 'mysql2/promise';
 import { readFileSync, existsSync } from 'node:fs';
 import { join, dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -36,6 +36,10 @@ function loadDotEnv(path) {
   }
 }
 
+// Los mismos tipos que la app (fechas como Date, TINY(1) como boolean): el
+// codigo del diario y del Powerade que se ejecuta mas abajo depende de eso.
+const { typeCast } = await import(pathToFileURL(join(ROOT, 'dist', 'database', 'database.pool-factory.js')).href);
+
 const rootPassword = process.env.MYSQL_ROOT_PASSWORD || undefined;
 const db = await createConnection({
   host: process.env.MYSQL_HOST ?? 'localhost',
@@ -43,7 +47,7 @@ const db = await createConnection({
   user: rootPassword ? 'root' : (process.env.MYSQL_USER ?? 'root'),
   password: rootPassword ?? process.env.MYSQL_PASSWORD ?? '',
   database: process.env.MYSQL_DATABASE,
-  dateStrings: true,
+  typeCast,
 });
 
 const views = readFileSync(join(ROOT, 'database', 'views.sql'), 'utf8')
@@ -84,6 +88,47 @@ async function snapshot(ctx) {
     out[`GetPlayerAchievements(${p})`] = await call('CALL GetPlayerAchievements(?)', [p]);
     out[`GetPlayerById(${p})`] = await call('CALL GetPlayerById(?)', [p]);
   }
+  return out;
+}
+
+/**
+ * El diario y el Powerade leen partidos con SQL propio en TypeScript. Para que
+ * esta prueba los cubra se ejecuta el codigo compilado real (dist/, hace falta
+ * `npm run build`) contra la MISMA conexion de la transaccion, con un
+ * DatabaseService minimo que delega en ella.
+ */
+async function loadAppReaders() {
+  const load = async (rel) => (await import(pathToFileURL(join(ROOT, 'dist', rel)).href));
+  const { DossierBuilder } = await load('modules/newsletter/dossier.builder.js');
+  const { PoweradeRepository } = await load('modules/powerade/powerade.repository.js');
+  const { NewsletterRepository } = await load('modules/newsletter/newsletter.repository.js');
+  const callRaw = async (sp, params = []) => {
+    const [rows] = await db.query(`CALL ${sp}(${params.map(() => '?').join(', ')})`, params);
+    return rows;
+  };
+  const fakeDb = {
+    withConnection: (fn) => fn(db),
+    callMulti: async (sp, params) => (await callRaw(sp, params)).slice(0, -1),
+    callList: async (sp, params) => (await callRaw(sp, params))[0],
+    callSimple: async (sp, params) => (await callRaw(sp, params))[0][0],
+    callSimpleOrNull: async (sp, params) => (await callRaw(sp, params))[0][0] ?? null,
+  };
+  return {
+    dossier: new DossierBuilder(fakeDb),
+    powerade: new PoweradeRepository(fakeDb),
+    newsletter: new NewsletterRepository(fakeDb),
+  };
+}
+
+async function snapshotApp(app, t) {
+  const out = {};
+  const dossier = await app.dossier.build([], { tournamentId: t });
+  for (const [key, value] of Object.entries(dossier)) out[`dossier.${key}`] = value;
+  out['powerade.findParticipants'] = await app.powerade.findParticipants(t);
+  out['powerade.findMaxMatchId'] = await app.powerade.findMaxMatchId(t);
+  out['powerade.countMatches'] = await app.powerade.countMatches(t, 0);
+  out['powerade.findTournamentTable'] = await app.powerade.findTournamentTable(t);
+  out['newsletter.findMaxMatchId'] = await app.newsletter.findMaxMatchId();
   return out;
 }
 
@@ -132,9 +177,17 @@ try {
   if (players.length < 6) throw new Error('El torneo en juego no tiene 6 jugadores activos');
   const ctx = { tournamentId: tournament.tournamentId, playerIds: players.map((r) => r.playerId) };
 
-  const before = await snapshot(ctx);
+  const app = await loadAppReaders();
+  const before = { ...(await snapshot(ctx)), ...(await snapshotApp(app, ctx.tournamentId)) };
+  // El dossier tiene que ser determinista para poder compararlo: se arma dos veces.
+  const again = await snapshotApp(app, ctx.tournamentId);
+  const unstable = diff(again, Object.fromEntries(Object.keys(again).map((k) => [k, before[k]])));
+  for (const key of unstable) {
+    delete before[key];
+    console.log(`  (no determinista, se omite: ${key})`);
+  }
   await insertPending(ctx);
-  const after = await snapshot(ctx);
+  const after = { ...(await snapshot(ctx)), ...(await snapshotApp(app, ctx.tournamentId)) };
   const changed = diff(before, after);
 
   if (changed.length) {

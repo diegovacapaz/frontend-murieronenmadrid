@@ -197,7 +197,9 @@ export class DossierBuilder {
   }
 
   /**
-   * Todos los partidos, del más viejo al más nuevo.
+   * Todos los partidos JUGADOS, del más viejo al más nuevo. vMatchDetail
+   * también lista los que están en preparación o listos (es el listado de la
+   * app), y el diario no puede contar un partido que todavía no se jugó.
    *
    * El ORDER BY no es cosmético: es lo que le permite al modelo razonar sobre
    * secuencias —rachas, revanchas, el partido que cortó algo— sin ordenar nada
@@ -233,6 +235,7 @@ export class DossierBuilder {
            FROM vMatchDetail v
            INNER JOIN Tournaments t ON t.tournamentId = v.tournamentId
            LEFT JOIN MatchNotes n ON n.matchId = v.matchId
+          WHERE v.state = 'J'
           ORDER BY v.playedAt, v.matchId`,
       );
 
