@@ -117,6 +117,11 @@ export class TeamMakerGateway implements OnGatewayInit, OnGatewayDisconnect {
     });
   }
 
+  @SubscribeMessage('tm:nick')
+  nick(@ConnectedSocket() client: Socket, @MessageBody() body: { nick?: unknown }): Promise<Ack> {
+    return this.run(() => ({ nick: this.service.setNick(client.id, body?.nick) }));
+  }
+
   @SubscribeMessage('tm:react')
   react(
     @ConnectedSocket() client: Socket,

@@ -271,23 +271,42 @@ describe('TeamMakerService', () => {
     await expect(service.vote('a', 'S')).rejects.toMatchObject({ code: 'INVALID_COLOR' });
   });
 
-  it('captain cannot react; viewer limited to one emote per 4s', async () => {
+  it('el capitan reacciona firmado con su nombre; un emote cada 2s y un mensaje cada 3s', async () => {
     await twoCaptains();
-    await expect(service.react('a', { emoteId: 'emote_king_cry' })).rejects.toMatchObject({
-      code: 'CAPTAIN_CANNOT_REACT',
-    });
+    await service.react('a', { emoteId: 'emote_king_cry' });
 
     await service.join('v', 70, { nick: '  Nacho ' });
     await service.react('v', { emoteId: 'emote_king_cry' });
     await expect(service.react('v', { emoteId: 'emote_king_cry' })).rejects.toMatchObject({
       code: 'RATE_LIMITED',
     });
-    clock.advance(4000);
+    await service.react('v', { text: 'vamos' });
+    await expect(service.react('v', { text: 'otra' })).rejects.toMatchObject({ code: 'RATE_LIMITED' });
+    clock.advance(1999);
+    await expect(service.react('v', { emoteId: 'emote_goblin_grin' })).rejects.toMatchObject({
+      code: 'RATE_LIMITED',
+    });
+    clock.advance(1);
     await service.react('v', { emoteId: 'emote_goblin_grin' });
+    await expect(service.react('v', { text: 'otra' })).rejects.toMatchObject({ code: 'RATE_LIMITED' });
+    clock.advance(1000);
+    await service.react('v', { text: 'otra' });
 
     const reactions = room.filter(([e]) => e === 'tm:reaction').map(([, p]) => p);
-    expect(reactions).toHaveLength(2);
-    expect(reactions[0]).toMatchObject({ nick: 'Nacho', emoteId: 'emote_king_cry' });
+    expect(reactions).toHaveLength(5);
+    expect(reactions[0]).toMatchObject({ nick: '★ J1', captain: true, emoteId: 'emote_king_cry' });
+    expect(reactions[1]).toMatchObject({ nick: 'Nacho', captain: false, emoteId: 'emote_king_cry' });
+  });
+
+  it('el apodo puesto despues de entrar firma las reacciones (bug: salian como Anónimo)', async () => {
+    await service.join('v', 70, {}); // la pagina entra antes de "toca para entrar"
+    expect(service.setNick('v', '  Lobo  ')).toBe('Lobo');
+    await service.react('v', { text: 'hola' });
+    expect(service.setNick('v', '★ Diego')).toBe('Diego');
+    clock.advance(3000);
+    await service.react('v', { text: 'chau' });
+    const nicks = room.filter(([e]) => e === 'tm:reaction').map(([, p]) => (p as { nick: string }).nick);
+    expect(nicks).toEqual(['Lobo', 'Diego']);
   });
 
   it('un mensaje se limpia y uno vacio se rechaza', async () => {

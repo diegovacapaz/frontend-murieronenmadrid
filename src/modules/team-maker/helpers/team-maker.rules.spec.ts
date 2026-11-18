@@ -120,25 +120,25 @@ describe('resolveColors', () => {
 });
 
 describe('ReactionLimiter', () => {
-  it('un emote cada 4 segundos por socket', () => {
+  it('un emote cada 2 segundos por socket', () => {
     let now = 0;
     const limiter = new ReactionLimiter(() => now);
     expect(limiter.tryEmote('a')).toBe(true);
-    now = 3999;
+    now = 1999;
     expect(limiter.tryEmote('a')).toBe(false);
     expect(limiter.tryEmote('b')).toBe(true);
-    now = 4000;
+    now = 2000;
     expect(limiter.tryEmote('a')).toBe(true);
   });
 
-  it('un mensaje cada 6 segundos, independiente de los emotes', () => {
+  it('un mensaje cada 3 segundos, independiente de los emotes', () => {
     let now = 0;
     const limiter = new ReactionLimiter(() => now);
     expect(limiter.tryEmote('a')).toBe(true);
     expect(limiter.trySay('a')).toBe(true);
-    now = 5999;
+    now = 2999;
     expect(limiter.trySay('a')).toBe(false);
-    now = 6000;
+    now = 3000;
     expect(limiter.trySay('a')).toBe(true);
   });
 
@@ -162,5 +162,10 @@ describe('sanitizeSay y sanitizeNick', () => {
     expect(sanitizeNick('   ')).toBe('Anónimo');
     expect(sanitizeNick(undefined)).toBe('Anónimo');
     expect(sanitizeNick('Nacho el Grande del Oeste')).toBe('Nacho el Grande');
+  });
+
+  it('un apodo no puede llevar la estrella de los capitanes', () => {
+    expect(sanitizeNick('★ Diego')).toBe('Diego');
+    expect(sanitizeNick('★')).toBe('Anónimo');
   });
 });
