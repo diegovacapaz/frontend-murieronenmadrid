@@ -1,9 +1,9 @@
 import type { PickError, PickRef, Seat, TeamMakerState } from '../team-maker.types';
 
 /** Cooldown de emotes por socket. */
-export const EMOTE_COOLDOWN_MS = 4000;
+export const EMOTE_COOLDOWN_MS = 2000;
 /** Cooldown de mensajes por socket. */
-export const SAY_COOLDOWN_MS = 6000;
+export const SAY_COOLDOWN_MS = 3000;
 export const SAY_MAX_LENGTH = 40;
 export const NICK_MAX_LENGTH = 16;
 export const ANONYMOUS_NICK = 'Anónimo';
@@ -133,7 +133,11 @@ export function sanitizeSay(text: unknown): string | null {
   return clean(text, SAY_MAX_LENGTH) || null;
 }
 
-/** Apodo de un viewer: limpio y hasta 16. Vacio es Anónimo. */
+/**
+ * Apodo de un viewer: limpio y hasta 16. Vacio es Anónimo. Sin estrellas: la
+ * estrella marca a los capitanes y un viewer no se puede hacer pasar por uno.
+ */
 export function sanitizeNick(text: unknown): string {
-  return clean(text, NICK_MAX_LENGTH) || ANONYMOUS_NICK;
+  const plain = typeof text === 'string' ? text.replace(/[★☆⭐]/gu, '') : text;
+  return clean(plain, NICK_MAX_LENGTH) || ANONYMOUS_NICK;
 }

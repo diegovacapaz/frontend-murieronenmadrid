@@ -320,7 +320,10 @@ export class TeamMakerService {
   async react(socketId: string, reaction: { emoteId?: unknown; text?: unknown }): Promise<void> {
     const live = this.liveOf(socketId);
     const entry = live.sockets.get(socketId)!;
-    if (entry.seat !== null) throw new TeamMakerError('CAPTAIN_CANNOT_REACT');
+    // El capitan tambien reacciona, firmado con su nombre: no puede hacerse pasar
+    // por viewer ni un viewer por capitan (los apodos no llevan la estrella).
+    const captain = entry.seat !== null;
+    const nick = captain ? `★ ${live.record.seats[entry.seat!].name ?? ''}`.trim() : entry.nick;
 
     if (reaction.emoteId !== undefined) {
       if (typeof reaction.emoteId !== 'string' || !EMOTE_ID.test(reaction.emoteId)) {
@@ -328,7 +331,8 @@ export class TeamMakerService {
       }
       if (!this.limiter.tryEmote(socketId)) throw new TeamMakerError('RATE_LIMITED');
       this.emitRoom(live.record.matchId, 'tm:reaction', {
-        nick: entry.nick,
+        nick,
+        captain,
         emoteId: reaction.emoteId,
         at: this.clock.now(),
       });
@@ -338,7 +342,17 @@ export class TeamMakerService {
     const text = sanitizeSay(reaction.text);
     if (!text) throw new TeamMakerError('EMPTY');
     if (!this.limiter.trySay(socketId)) throw new TeamMakerError('RATE_LIMITED');
-    this.emitRoom(live.record.matchId, 'tm:reaction', { nick: entry.nick, text, at: this.clock.now() });
+    this.emitRoom(live.record.matchId, 'tm:reaction', { nick, captain, text, at: this.clock.now() });
+  }
+
+  /**
+   * El viewer pone (o cambia) su apodo despues de entrar: el join sale apenas
+   * abre la pagina, antes de "toca para entrar".
+   */
+  setNick(socketId: string, nick: unknown): string {
+    const entry = this.liveOf(socketId).sockets.get(socketId)!;
+    entry.nick = sanitizeNick(typeof nick === 'string' ? nick : undefined);
+    return entry.nick;
   }
 
   leave(socketId: string): void {
