@@ -15,6 +15,7 @@ import {
   ValidateNested,
 } from 'class-validator';
 import { Team } from '../../teams/enums/team.enum';
+import { MatchState } from '../enums/match-state.enum';
 
 export class MatchPlayerDto {
   @ApiProperty()
@@ -22,9 +23,28 @@ export class MatchPlayerDto {
   @Min(1)
   playerId!: number;
 
-  @ApiProperty({ enum: Team })
+  @ApiPropertyOptional({
+    enum: Team,
+    nullable: true,
+    description: 'Obligatorio salvo en un partido en preparacion.',
+  })
+  @IsOptional()
   @IsEnum(Team)
-  team!: Team;
+  team?: Team | null;
+}
+
+/** Un random: nombre y, si ya se sabe, equipo. */
+export class MatchGuestDto {
+  @ApiProperty({ maxLength: 20, example: 'Hernán' })
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(20)
+  name!: string;
+
+  @ApiPropertyOptional({ enum: Team, nullable: true })
+  @IsOptional()
+  @IsEnum(Team)
+  team?: Team | null;
 }
 
 export class CreateMatchDto {
@@ -96,4 +116,26 @@ export class CreateMatchDto {
   @IsString()
   @MaxLength(2000)
   notes?: string;
+
+  @ApiPropertyOptional({
+    enum: [MatchState.PREPARING, MatchState.PLAYED],
+    default: MatchState.PLAYED,
+    description:
+      'J carga un partido ya jugado (como siempre). P crea uno en preparacion: ' +
+      'sin resultado, equipos opcionales y total impar permitido. En una ' +
+      'edicion tiene que ser el estado que el partido ya tiene.',
+  })
+  @IsOptional()
+  @IsEnum(MatchState)
+  state?: MatchState;
+
+  @ApiPropertyOptional({
+    type: [MatchGuestDto],
+    description: 'Los randoms: juegan pero no son jugadores de la base y nunca suman.',
+  })
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => MatchGuestDto)
+  guests?: MatchGuestDto[];
 }

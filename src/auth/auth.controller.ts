@@ -39,20 +39,6 @@ export class AuthController {
     // la hace este handler a mano. Es intencional — la pregunta "sigo siendo
     // admin?" tiene que poder responderse con "no" (200 + isAdmin:false) y no
     // con un 401 que el interceptor de axios interpretaria como sesion caida.
-    if (!authorization) {
-      return { isAdmin: false };
-    }
-
-    const [scheme, token] = authorization.split(' ');
-    if (scheme?.toLowerCase() !== 'bearer' || !token) {
-      return { isAdmin: false };
-    }
-
-    try {
-      this.authService.verifyToken(token.trim());
-      return { isAdmin: true };
-    } catch {
-      return { isAdmin: false };
-    }
+    return { isAdmin: this.authService.isAdminAuthorization(authorization) };
   }
 }

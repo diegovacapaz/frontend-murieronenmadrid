@@ -91,7 +91,7 @@ export class PoweradeRepository implements IPoweradeRepository {
         `SELECT mp.playerId,
                 p.displayName,
                 CAST(COUNT(*) AS SIGNED) AS partidos
-           FROM MatchPlayers mp
+           FROM vPlayedMatchPlayers mp
            INNER JOIN vPlayerDetail p ON p.playerId = mp.playerId
           WHERE mp.tournamentId = ?
           GROUP BY mp.playerId, p.displayName
@@ -110,7 +110,7 @@ export class PoweradeRepository implements IPoweradeRepository {
   async findMaxMatchId(tournamentId: number): Promise<number | null> {
     return this.db.withConnection(async (conn) => {
       const [rows] = await conn.execute<{ maxMatchId: number | null }[] & RowDataPacket[]>(
-        `SELECT MAX(matchId) AS maxMatchId FROM Matches WHERE tournamentId = ?`,
+        `SELECT MAX(matchId) AS maxMatchId FROM vPlayedMatches WHERE tournamentId = ?`,
         [tournamentId],
       );
 
@@ -128,7 +128,7 @@ export class PoweradeRepository implements IPoweradeRepository {
       >(
         `SELECT CAST(COALESCE(SUM(matchId <= ?), 0) AS SIGNED) AS contados,
                 CAST(COALESCE(SUM(matchId >  ?), 0) AS SIGNED) AS nuevos
-           FROM Matches
+           FROM vPlayedMatches
           WHERE tournamentId = ?`,
         [lastMatchId, lastMatchId, tournamentId],
       );

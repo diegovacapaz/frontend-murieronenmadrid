@@ -31,7 +31,9 @@ interface TypeCastField {
  * JSON: llega como buffer; se parsea aca para que las columnas armadas con
  *   JSON_ARRAYAGG (convocatorias, titulos) lleguen como objetos.
  */
-function typeCast(field: TypeCastField, next: () => unknown): unknown {
+// Exportado para los scripts de verificacion, que abren su propia conexion pero
+// tienen que ver los tipos igual que la app.
+export function typeCast(field: TypeCastField, next: () => unknown): unknown {
   if (field.type === 'NEWDECIMAL') {
     const value = field.string();
     return value === null ? null : Number(value);

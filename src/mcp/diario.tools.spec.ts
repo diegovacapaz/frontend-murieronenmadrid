@@ -58,7 +58,7 @@ describe('aResultadoDeHerramienta', () => {
 
     const resultado = await aResultadoDeHerramienta(async () => objeto);
 
-    expect(JSON.parse(resultado.content[0]!.text)).toEqual(objeto);
+    expect(JSON.parse(resultado.content[0].text)).toEqual(objeto);
   });
 
   it('un NewsletterMcpError vuelve como error de herramienta con su mensaje', async () => {
@@ -80,8 +80,8 @@ describe('aResultadoDeHerramienta', () => {
     }, log);
 
     expect(resultado.isError).toBe(true);
-    expect(resultado.content[0]!.text).toContain('Error interno del diario');
-    expect(resultado.content[0]!.text).not.toContain('secreto');
+    expect(resultado.content[0].text).toContain('Error interno del diario');
+    expect(resultado.content[0].text).not.toContain('secreto');
     expect(log).toHaveBeenCalledWith(expect.stringContaining('detalle interno secreto'));
   });
 
@@ -92,12 +92,12 @@ describe('aResultadoDeHerramienta', () => {
     const resultado = await aResultadoDeHerramienta(async () => circular);
 
     expect(resultado.isError).toBe(true);
-    expect(resultado.content[0]!.text).toContain('Error interno del diario');
+    expect(resultado.content[0].text).toContain('Error interno del diario');
   });
 
   it('un valor undefined da un texto vacío y no un undefined suelto', async () => {
     const resultado = await aResultadoDeHerramienta(async () => undefined);
 
-    expect(resultado.content[0]!.text).toBe('');
+    expect(resultado.content[0].text).toBe('');
   });
 });

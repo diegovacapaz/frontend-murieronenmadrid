@@ -362,7 +362,7 @@ BEGIN
         m.playedAt,
         r.result,
         r.team
-    FROM Matches m
+    FROM vPlayedMatches m
     INNER JOIN Tournaments t ON t.tournamentId = m.tournamentId
     LEFT JOIN vMatchPlayerResults r
       ON r.matchId  = m.matchId
@@ -475,7 +475,7 @@ BEGIN
             AVG(goalsDiference)         AS avgGoals,
             MIN(playedAt)               AS firstMatchAt,
             MAX(playedAt)               AS lastMatchAt
-        FROM Matches
+        FROM vPlayedMatches
         WHERE tournamentId = pTournamentId
         GROUP BY tournamentId
     ) m ON m.tournamentId = t.tournamentId
@@ -484,7 +484,7 @@ BEGIN
             tournamentId,
             COUNT(DISTINCT playerId)                      AS players,
             COUNT(*) / NULLIF(COUNT(DISTINCT matchId), 0) AS avgSquad
-        FROM MatchPlayers
+        FROM vPlayedMatchPlayers
         WHERE tournamentId = pTournamentId
         GROUP BY tournamentId
     ) mp ON mp.tournamentId = t.tournamentId
@@ -497,8 +497,8 @@ BEGIN
     -- DISTINCT es lo que evita contar el partido una vez por jugador.
     WITH teamMatches AS (
         SELECT DISTINCT mp.matchId, mp.team, m.winnerTeam, m.isDerby, m.goalsDiference
-        FROM MatchPlayers mp
-        INNER JOIN Matches m ON m.matchId = mp.matchId
+        FROM vPlayedMatchPlayers mp
+        INNER JOIN vPlayedMatches m ON m.matchId = mp.matchId
         WHERE mp.tournamentId = pTournamentId
     )
     SELECT
@@ -523,7 +523,7 @@ BEGIN
     -- requerimiento — Sagrado vs Resto del Mundo no se mezcla con Dark vs Light.
     WITH teamsInMatch AS (
         SELECT DISTINCT matchId, team
-        FROM MatchPlayers
+        FROM vPlayedMatchPlayers
         WHERE tournamentId = pTournamentId
     ),
     pairs AS (
@@ -543,7 +543,7 @@ BEGIN
         CAST(SUM(m.winnerTeam = pr.teamB) AS DOUBLE) / COUNT(*) AS winRateB,
         CAST(AVG(m.goalsDiference)               AS DOUBLE) AS avgGoalsDiference
     FROM pairs pr
-    INNER JOIN Matches m ON m.matchId = pr.matchId
+    INNER JOIN vPlayedMatches m ON m.matchId = pr.matchId
     GROUP BY pr.teamA, pr.teamB, m.isDerby
     ORDER BY m.isDerby, pr.teamA, pr.teamB;
 
@@ -552,7 +552,7 @@ BEGIN
         place,
         CAST(COUNT(*)                 AS SIGNED) AS matches,
         CAST(AVG(goalsDiference)      AS DOUBLE) AS avgGoalsDiference
-    FROM Matches
+    FROM vPlayedMatches
     WHERE tournamentId = pTournamentId
     GROUP BY place
     ORDER BY matches DESC, place;
@@ -566,8 +566,8 @@ BEGIN
         m.goalsDiference,
         m.isDerby,
         CAST(COUNT(mp.playerId) AS SIGNED) AS squadSize
-    FROM Matches m
-    LEFT JOIN MatchPlayers mp ON mp.matchId = m.matchId
+    FROM vPlayedMatches m
+    LEFT JOIN vPlayedMatchPlayers mp ON mp.matchId = m.matchId
     WHERE m.tournamentId = pTournamentId
     GROUP BY m.matchId, m.playedAt, m.place, m.winnerTeam, m.goalsDiference, m.isDerby
     ORDER BY m.playedAt, m.matchId;
@@ -596,12 +596,12 @@ BEGIN
             m.matchId,
             m.playedAt,
             CAST(ROW_NUMBER() OVER (ORDER BY m.playedAt, m.matchId) AS SIGNED) AS n
-        FROM Matches m
+        FROM vPlayedMatches m
         WHERE m.tournamentId = pTournamentId
     ),
     squad AS (
         SELECT DISTINCT mp.playerId
-        FROM MatchPlayers mp
+        FROM vPlayedMatchPlayers mp
         WHERE mp.tournamentId = pTournamentId
     ),
     grid AS (
@@ -694,8 +694,8 @@ BEGIN
             JSON_ARRAYAGG(ordered.matchId) AS matches
         FROM (
             SELECT mp.playerId, mp.matchId
-            FROM MatchPlayers mp
-            INNER JOIN Matches m ON m.matchId = mp.matchId
+            FROM vPlayedMatchPlayers mp
+            INNER JOIN vPlayedMatches m ON m.matchId = mp.matchId
             WHERE m.tournamentId = pTournamentId
             ORDER BY mp.playerId, m.playedAt, m.matchId
         ) ordered
@@ -733,20 +733,20 @@ BEGIN
         (SELECT CAST(COUNT(*) AS SIGNED) FROM Players WHERE isSagrado = 1) AS sagradoPlayers,
         (SELECT CAST(COUNT(*) AS SIGNED) FROM Tournaments)                 AS tournaments,
         (SELECT CAST(COUNT(*) AS SIGNED) FROM Tournaments WHERE state = 'F') AS finishedTournaments,
-        (SELECT CAST(COUNT(*) AS SIGNED) FROM Matches)                     AS matches,
-        (SELECT CAST(SUM(isDerby = 1) AS SIGNED) FROM Matches)             AS derbies,
-        (SELECT CAST(SUM(winnerTeam IS NULL) AS SIGNED) FROM Matches)      AS draws,
-        (SELECT CAST(SUM(goalsDiference) AS SIGNED) FROM Matches)          AS totalGoalsDiference,
-        (SELECT CAST(AVG(goalsDiference) AS DOUBLE) FROM Matches)          AS avgGoalsDiference,
-        (SELECT MIN(playedAt) FROM Matches)                                AS firstMatchAt,
-        (SELECT MAX(playedAt) FROM Matches)                                AS lastMatchAt,
-        (SELECT CAST(COUNT(*) AS SIGNED) FROM MatchPlayers)                AS appearances,
+        (SELECT CAST(COUNT(*) AS SIGNED) FROM vPlayedMatches)                     AS matches,
+        (SELECT CAST(SUM(isDerby = 1) AS SIGNED) FROM vPlayedMatches)             AS derbies,
+        (SELECT CAST(SUM(winnerTeam IS NULL) AS SIGNED) FROM vPlayedMatches)      AS draws,
+        (SELECT CAST(SUM(goalsDiference) AS SIGNED) FROM vPlayedMatches)          AS totalGoalsDiference,
+        (SELECT CAST(AVG(goalsDiference) AS DOUBLE) FROM vPlayedMatches)          AS avgGoalsDiference,
+        (SELECT MIN(playedAt) FROM vPlayedMatches)                                AS firstMatchAt,
+        (SELECT MAX(playedAt) FROM vPlayedMatches)                                AS lastMatchAt,
+        (SELECT CAST(COUNT(*) AS SIGNED) FROM vPlayedMatchPlayers)                AS appearances,
         (SELECT CAST(COUNT(*) AS DOUBLE) / NULLIF(COUNT(DISTINCT matchId), 0)
-           FROM MatchPlayers)                                              AS avgPlayersPerMatch;
+           FROM vPlayedMatchPlayers)                                              AS avgPlayersPerMatch;
 
     -- ── 2. headToHead ─────────────────────────────────────────────────────────
     WITH teamsInMatch AS (
-        SELECT DISTINCT matchId, team FROM MatchPlayers
+        SELECT DISTINCT matchId, team FROM vPlayedMatchPlayers
     ),
     pairs AS (
         SELECT a.matchId, a.team AS teamA, b.team AS teamB
@@ -765,7 +765,7 @@ BEGIN
         CAST(SUM(m.winnerTeam = pr.teamB) AS DOUBLE) / COUNT(*) AS winRateB,
         CAST(AVG(m.goalsDiference)                   AS DOUBLE) AS avgGoalsDiference
     FROM pairs pr
-    INNER JOIN Matches m ON m.matchId = pr.matchId
+    INNER JOIN vPlayedMatches m ON m.matchId = pr.matchId
     GROUP BY pr.teamA, pr.teamB, m.isDerby
     ORDER BY m.isDerby, pr.teamA, pr.teamB;
 
@@ -818,11 +818,11 @@ BEGIN
 
     -- ── 6. records ────────────────────────────────────────────────────────────
     SELECT
-        (SELECT CAST(MAX(goalsDiference) AS SIGNED) FROM Matches)            AS biggestWinMargin,
-        (SELECT matchId FROM Matches ORDER BY goalsDiference DESC, playedAt LIMIT 1)
+        (SELECT CAST(MAX(goalsDiference) AS SIGNED) FROM vPlayedMatches)            AS biggestWinMargin,
+        (SELECT matchId FROM vPlayedMatches ORDER BY goalsDiference DESC, playedAt LIMIT 1)
                                                                              AS biggestWinMatchId,
         (SELECT CAST(MAX(squad) AS SIGNED) FROM (
-            SELECT COUNT(*) AS squad FROM MatchPlayers GROUP BY matchId
+            SELECT COUNT(*) AS squad FROM vPlayedMatchPlayers GROUP BY matchId
          ) s)                                                                AS biggestSquad,
         (SELECT CAST(MAX(played) AS SIGNED) FROM vGeneralScoreboard)         AS mostMatchesPlayed,
         (SELECT CAST(MAX(cups) AS SIGNED) FROM vPlayerDetail)                AS mostCups;

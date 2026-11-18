@@ -23,4 +23,14 @@ export class SearchMatchDto {
   @IsInt()
   @Min(1)
   playerId?: number;
+
+  @ApiPropertyOptional({
+    description:
+      'Incluir partidos en preparacion. Solo tiene efecto con token de admin; ' +
+      'sin el se ignora.',
+  })
+  @IsOptional()
+  @Transform(toOptionalBoolean)
+  @IsBoolean()
+  includePending?: boolean;
 }

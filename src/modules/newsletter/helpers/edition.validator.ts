@@ -187,7 +187,7 @@ export function validarEdicion(
     // Los textos que pasan de la columna se recortan sin decir nada; acá se anota
     // para que quien lo quiera saber (el MCP) pueda pedir que se acorten.
     for (const [campo, tope] of Object.entries(LIMITES)) {
-      const largo = typeof nota[campo] === 'string' ? (nota[campo] as string).trim().length : 0;
+      const largo = typeof nota[campo] === 'string' ? (nota[campo]).trim().length : 0;
       if (largo > tope) {
         descartes.push(
           `El ${campo} de la nota "${titular.slice(0, 40)}" pasa de ${tope} caracteres ` +

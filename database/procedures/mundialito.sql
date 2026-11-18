@@ -313,8 +313,8 @@ BEGIN
     -- leer sobre cuantos cruces es.
     WITH crosses AS (
         SELECT other.playerId AS rivalId, CAST(COUNT(*) AS SIGNED) AS played
-        FROM MatchPlayers mine
-        INNER JOIN MatchPlayers other
+        FROM vPlayedMatchPlayers mine
+        INNER JOIN vPlayedMatchPlayers other
           ON other.matchId = mine.matchId
          AND other.team   <> mine.team
         WHERE mine.playerId = pPlayerId

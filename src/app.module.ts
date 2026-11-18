@@ -16,6 +16,7 @@ import { PlayersModule } from './modules/players/players.module';
 import { ScoreboardModule } from './modules/scoreboard/scoreboard.module';
 import { StatsModule } from './modules/stats/stats.module';
 import { TeamsModule } from './modules/teams/teams.module';
+import { TeamMakerModule } from './modules/team-maker/team-maker.module';
 import { TournamentsModule } from './modules/tournaments/tournaments.module';
 import { RealtimeModule } from './realtime/realtime.module';
 
@@ -36,6 +37,7 @@ import { RealtimeModule } from './realtime/realtime.module';
     PlayersModule,
     TournamentsModule,
     MatchesModule,
+    TeamMakerModule,
     PenaltiesModule,
     TeamsModule,
     ScoreboardModule,

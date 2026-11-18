@@ -43,6 +43,7 @@ export const SpErrorCode = {
   TOURNAMENT_NAME_ALREADY_EXISTS: 46204,
   TOURNAMENT_INVALID_DATES: 46205,
   TOURNAMENT_TRACKING_LOCKED: 46206,
+  TOURNAMENT_HAS_PENDING_MATCHES: 46207,
 
   // ── Matches (46300-46399) ──
   MATCH_NOT_FOUND: 46300,
@@ -52,6 +53,10 @@ export const SpErrorCode = {
   MATCH_INVALID_RESULT: 46304,
   MATCH_DUPLICATED_PLAYER: 46305,
   MATCH_PLAYER_INACTIVE: 46306,
+  MATCH_INVALID_STATE: 46307,
+  MATCH_ODD_LINEUP: 46308,
+  MATCH_MAKER_ACTIVE: 46309,
+  MATCH_GUEST_DUPLICATED: 46310,
 
   // ── Penalties (46400-46499) ──
   PENALTY_NOT_FOUND: 46400,
@@ -60,6 +65,10 @@ export const SpErrorCode = {
 
   // ── Teams (46500-46599) ──
   TEAM_NOT_FOUND: 46500,
+
+  // ── Team maker (46600-46699) ──
+  TEAM_MAKER_NOT_FOUND: 46600,
+  TEAM_MAKER_INVALID_STATE: 46601,
 } as const satisfies Partial<Record<AppErrorCodeValue, number>>;
 
 export type SpErrorCodeValue = (typeof SpErrorCode)[keyof typeof SpErrorCode];

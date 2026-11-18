@@ -229,6 +229,13 @@ BEGIN
         ELSEIF vState = pState THEN
             SIGNAL SQLSTATE '45003' SET MYSQL_ERRNO = 46201,
                 MESSAGE_TEXT = 'El torneo ya esta en ese estado';
+        -- Cerrar con partidos sin jugar los dejaria congelados para siempre:
+        -- un torneo finalizado ya no admite editarlos ni finalizarlos.
+        ELSEIF pState = 'F' AND EXISTS (
+            SELECT 1 FROM Matches
+            WHERE tournamentId = pTournamentId AND state IN ('P', 'R')) THEN
+            SIGNAL SQLSTATE '45003' SET MYSQL_ERRNO = 46207,
+                MESSAGE_TEXT = 'El torneo tiene partidos sin jugar: finalizalos o borralos primero';
         ELSE
             UPDATE Tournaments SET state = pState WHERE tournamentId = pTournamentId;
 

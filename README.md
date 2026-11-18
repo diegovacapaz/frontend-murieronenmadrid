@@ -180,6 +180,21 @@ recibe el aviso y refetchea solo la tabla que está mirando.
 El canal es de **una sola dirección**: el servidor emite, nadie manda comandos.
 Toda escritura entra por HTTP, donde el guard puede exigir el token.
 
+Además, `teammaker:started|updated|finished` (payload `{ matchId, tournamentId }`)
+avisan que un armado arrancó, avanzó o terminó, para la card de la portada.
+
+### El team maker: un namespace aparte, con comandos
+
+`/team-maker` es la única excepción a la regla de arriba, y está en su propio
+namespace para que el canal general siga siendo de un solo sentido. Ocupar el
+lugar de capitán es lo mismo que estar conectado, así que el capitán elige por
+el mismo socket que avisa cuando se cae. Entran `tm:join`, `tm:claim`, `tm:aim`,
+`tm:pick`, `tm:vote` y `tm:react`, cada uno con ack `{ ok, ... }`; sale
+`tm:state` (el estado completo del armado en cada cambio), `tm:aim` y
+`tm:reaction`. Las acciones de admin (abrir, reiniciar, cancelar) siguen por HTTP
+con el token. Cada paso se guarda en la base antes de difundirse: si la API se
+reinicia, el armado se rearma desde ahí y los capitanes vuelven con su token.
+
 ---
 
 ## La base
@@ -232,6 +247,29 @@ node scripts/apply-sql.mjs procedures/players.sql
 Corre como `root`: MySQL 8 no deja que un usuario común reemplace rutinas cuyo
 `DEFINER` es una cuenta con `SYSTEM_USER`, y el bootstrap las crea como root.
 
+### Publicar el team maker (estados del partido)
+
+Una sola vez, en este orden:
+
+```bash
+# 1. ALTER de una sola vez (NO es idempotente: correrlo dos veces falla)
+mysql -uroot -p murieron_en_madrid < database/match-states.alter.sql
+# 2. Tablas nuevas (reaplicable)
+node scripts/apply-sql.mjs team-maker-tables.sql
+# 3. Vistas y procedures
+node scripts/apply-sql.mjs
+# 4. Comprobar
+node scripts/verify-match-states.mjs     # un partido P o R no cambia ningún cálculo
+node scripts/verify-match-lifecycle.mjs  # P -> R -> J y el armado completo
+```
+
+No hay backfill: el default `state = 'J'` deja todos los partidos cargados como
+jugados. El proxy no necesita cambios: el namespace `/team-maker` viaja por la
+misma ruta `/socket.io/` que el canal general.
+
+Para una base nueva, el bootstrap de `infra/` tiene que cargar también
+`match-states.alter.sql` y `team-maker-tables.sql` después de `schema.sql`.
+
 ---
 
 ## Scripts
@@ -245,6 +283,8 @@ Corre como `root`: MySQL 8 no deja que un usuario común reemplace rutinas cuyo
 | `node scripts/verify-migration.mjs`  | Compara las tablas nuevas contra el sistema original |
 | `node scripts/verify-mundialito.mjs` | Recalcula el mundialito en JS y lo contrasta con la base |
 | `node scripts/apply-sql.mjs`         | Reaplica vistas y procedures                         |
+| `node scripts/verify-match-states.mjs` | Prueba que un partido sin jugar no cambia ningún cálculo |
+| `node scripts/verify-match-lifecycle.mjs` | Recorre P -> R -> J y el team maker contra los SPs |
 
 ---
 

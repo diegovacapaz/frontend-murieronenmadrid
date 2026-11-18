@@ -67,7 +67,7 @@ describe('AlmacenDeBorradores', () => {
       return almacen.guardar(valor);
     });
 
-    expect(almacen.obtener(ids[0]!)).toBeNull();
+    expect(almacen.obtener(ids[0])).toBeNull();
     expect(ids.slice(1).map((id) => almacen.obtener(id))).toEqual([2, 3, 4]);
   });
 

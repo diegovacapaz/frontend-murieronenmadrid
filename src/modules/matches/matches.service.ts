@@ -2,12 +2,16 @@ import { Inject, Injectable, NotFoundException } from '@nestjs/common';
 import { AppErrorCode } from '../../common/constants/error-codes.constants';
 import { RealtimeEvent } from '../../realtime/realtime.events';
 import { RealtimeService } from '../../realtime/realtime.service';
+import { TeamMakerService } from '../team-maker/team-maker.service';
 import { CreateMatchDto } from './dto/create-match.dto';
+import { FinishMatchDto } from './dto/finish-match.dto';
 import { MatchNotesResponseDto } from './dto/match-notes.dto';
 import { MatchResponseDto } from './dto/match-response.dto';
 import { SearchMatchDto } from './dto/search-match.dto';
+import { SetTeamsDto } from './dto/set-teams.dto';
 import { UpdateMatchDto } from './dto/update-match.dto';
 import { Match } from './entities/match.entity';
+import { MatchState } from './enums/match-state.enum';
 import { MatchMapper } from './helpers/match.mapper';
 import type { IMatchesRepository } from './interfaces/matches.repository.interface';
 import { MATCHES_REPOSITORY } from './matches.constants';
@@ -15,7 +19,7 @@ import { MATCHES_REPOSITORY } from './matches.constants';
 /**
  * Las reglas duras de un partido (torneo en juego, coherencia entre ganador y
  * diferencia, equipos que corresponden al tipo de partido, jugadores activos y
- * sin repetir) viven en los stored procedures.
+ * sin repetir, transiciones de estado) viven en los stored procedures.
  *
  * No es pereza: son controles que necesitan mirar varias tablas a la vez y
  * dentro de la misma transaccion que hace el INSERT. Validarlos tambien aca
@@ -23,7 +27,8 @@ import { MATCHES_REPOSITORY } from './matches.constants';
  * de carrera entre el chequeo y la escritura.
  *
  * Lo que si es responsabilidad de este service: traducir DTOs, orquestar el
- * repository y avisar por sockets.
+ * repository, decidir que ve quien (un partido en preparacion es solo para
+ * admins) y avisar por sockets.
  */
 @Injectable()
 export class MatchesService {
@@ -31,12 +36,15 @@ export class MatchesService {
     @Inject(MATCHES_REPOSITORY)
     private readonly matchesRepository: IMatchesRepository,
     private readonly realtime: RealtimeService,
+    private readonly teamMaker: TeamMakerService,
   ) {}
 
-  private async getMatchOrFail(matchId: number): Promise<Match> {
+  private async getMatchOrFail(matchId: number, isAdmin: boolean): Promise<Match> {
     const match = await this.matchesRepository.findById(matchId);
 
-    if (!match) {
+    // Un partido en preparacion no existe para quien no es admin: responder
+    // 404 y no 403 evita confirmar que hay algo ahi.
+    if (!match || (match.state === MatchState.PREPARING && !isAdmin)) {
       throw new NotFoundException({
         message: 'Match not found',
         errorCode: AppErrorCode.MATCH_NOT_FOUND,
@@ -46,35 +54,67 @@ export class MatchesService {
     return match;
   }
 
-  async search(params: SearchMatchDto): Promise<MatchResponseDto[]> {
-    const matches = await this.matchesRepository.search(params);
+  async search(params: SearchMatchDto, isAdmin: boolean): Promise<MatchResponseDto[]> {
+    const matches = await this.matchesRepository.search({
+      ...params,
+      includePending: isAdmin && params.includePending === true,
+    });
     return MatchMapper.toResponseDtoList(matches);
   }
 
-  async findOneById(matchId: number): Promise<MatchResponseDto> {
-    const match = await this.getMatchOrFail(matchId);
+  async findOneById(matchId: number, isAdmin: boolean): Promise<MatchResponseDto> {
+    const match = await this.getMatchOrFail(matchId, isAdmin);
     return MatchMapper.toResponseDto(match);
   }
 
-  async create(dto: CreateMatchDto): Promise<MatchResponseDto> {
-    const { match, lineup, notes } = MatchMapper.fromCreateDto(dto);
+  /** Lo que alimenta la card de la portada: listos y armados en vivo. */
+  async findUpcoming(): Promise<MatchResponseDto[]> {
+    return MatchMapper.toResponseDtoList(await this.matchesRepository.findUpcoming());
+  }
 
-    const created = await this.matchesRepository.create(match, lineup, notes);
+  async create(dto: CreateMatchDto): Promise<MatchResponseDto> {
+    const { match, lineup, guests, notes } = MatchMapper.fromCreateDto(dto);
+
+    const created = await this.matchesRepository.create(match, lineup, guests, notes);
     const response = MatchMapper.toResponseDto(created);
 
-    this.realtime.emit(RealtimeEvent.MATCH_CREATED, response);
-    this.realtime.invalidateScoreboard(created.tournamentId);
+    this.notify(RealtimeEvent.MATCH_CREATED, response);
     return response;
   }
 
   async update(matchId: number, dto: UpdateMatchDto): Promise<MatchResponseDto> {
-    const { match, lineup, notes } = MatchMapper.fromUpdateDto(dto);
+    const { match, lineup, guests, notes } = MatchMapper.fromUpdateDto(dto);
 
-    const updated = await this.matchesRepository.update(matchId, match, lineup, notes);
+    const updated = await this.matchesRepository.update(matchId, match, lineup, guests, notes);
     const response = MatchMapper.toResponseDto(updated);
 
-    this.realtime.emit(RealtimeEvent.MATCH_UPDATED, response);
-    this.realtime.invalidateScoreboard(updated.tournamentId);
+    this.notify(RealtimeEvent.MATCH_UPDATED, response);
+    return response;
+  }
+
+  /** Armar equipos a mano: en preparacion -> listo. */
+  async setTeams(matchId: number, dto: SetTeamsDto): Promise<MatchResponseDto> {
+    const { lineup, guests } = MatchMapper.fromSetTeamsDto(dto);
+    const response = MatchMapper.toResponseDto(
+      await this.matchesRepository.setTeams(matchId, lineup, guests),
+    );
+    this.notify(RealtimeEvent.MATCH_UPDATED, response);
+    return response;
+  }
+
+  /** Deshacer equipos: listo -> en preparacion. */
+  async clearTeams(matchId: number): Promise<MatchResponseDto> {
+    const response = MatchMapper.toResponseDto(await this.matchesRepository.clearTeams(matchId));
+    this.notify(RealtimeEvent.MATCH_UPDATED, response);
+    return response;
+  }
+
+  /** Cargar el resultado: listo -> jugado. Desde aca el partido cuenta. */
+  async finish(matchId: number, dto: FinishMatchDto): Promise<MatchResponseDto> {
+    const response = MatchMapper.toResponseDto(
+      await this.matchesRepository.finish(matchId, MatchMapper.fromFinishDto(dto)),
+    );
+    this.notify(RealtimeEvent.MATCH_UPDATED, response);
     return response;
   }
 
@@ -105,9 +145,26 @@ export class MatchesService {
   async remove(matchId: number): Promise<MatchResponseDto> {
     const removed = await this.matchesRepository.remove(matchId);
     const response = MatchMapper.toResponseDto(removed);
+    // Su armado se fue en cascada con el partido; el de memoria hay que soltarlo.
+    this.teamMaker.discard(matchId);
 
-    this.realtime.emit(RealtimeEvent.MATCH_DELETED, response);
-    this.realtime.invalidateScoreboard(removed.tournamentId);
+    this.notify(RealtimeEvent.MATCH_DELETED, response);
     return response;
+  }
+
+  /**
+   * Avisa por socket. El canal es publico, asi que un partido en preparacion
+   * viaja sin datos (solo su id): el frontend refetchea y, si no es admin, no
+   * lo ve. Solo un partido jugado mueve las tablas.
+   */
+  private notify(event: RealtimeEvent, match: MatchResponseDto): void {
+    const payload =
+      match.state === MatchState.PREPARING
+        ? { matchId: match.matchId, tournamentId: match.tournamentId, state: match.state }
+        : match;
+    this.realtime.emit(event, payload);
+    if (match.state === MatchState.PLAYED) {
+      this.realtime.invalidateScoreboard(match.tournamentId);
+    }
   }
 }
