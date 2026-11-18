@@ -211,6 +211,72 @@ try {
   } else {
     console.log('  skip clasico: no hay jugadores Sagrado activos');
   }
+
+  // ── 12. team maker: recorrido completo ─────────────────────────────────────
+  const eight = ids.slice(0, 6).map((playerId) => ({ playerId, team: null }));
+  const [m3row] = await call('CALL CreateMatch(?, NULL, 0, ?, NOW(), FALSE, ?, NULL, ?, ?)', [
+    t, 'VERIFY', json(eight), 'P', json([{ name: 'Hernán', team: null }, { name: 'Primo', team: null }]),
+  ]);
+  const m3 = m3row.matchId;
+  const [mk] = await expectRow('CreateTeamMaker', 'CALL CreateTeamMaker(?, ?)', [m3, 'codigocodigocodigocodi'], (rows) =>
+    rows[0]?.makerId ? null : 'sin makerId',
+  );
+  const makerId = mk?.makerId;
+  await expectErrno('segundo maker activo', 46309, 'CALL CreateTeamMaker(?, ?)', [m3, 'otrocodigootrocodigoot']);
+
+  const [, , , roster] = (await db.query('CALL GetTeamMakerByMatch(?)', [m3]))[0];
+  const guestIds = roster.filter((r) => r.kind === 'G').map((r) => r.id);
+  await expectErrno('reclamar con un random', 46601, 'CALL ClaimTeamMakerSeat(?, ?, ?, ?)', [makerId, 0, guestIds[0], 'h']);
+  await expectErrno('reclamar con alguien no convocado', 46601, 'CALL ClaimTeamMakerSeat(?, ?, ?, ?)', [makerId, 0, ids[7], 'h']);
+  await call('CALL ClaimTeamMakerSeat(?, ?, ?, ?)', [makerId, 0, ids[0], 'hash0']);
+  await expectErrno('el mismo jugador en los dos lugares', 46601, 'CALL ClaimTeamMakerSeat(?, ?, ?, ?)', [makerId, 1, ids[0], 'hash1']);
+  await call('CALL ClaimTeamMakerSeat(?, ?, ?, ?)', [makerId, 1, ids[1], 'hash1']);
+  await expectErrno('otro jugador en un lugar ya tomado', 46601, 'CALL ClaimTeamMakerSeat(?, ?, ?, ?)', [makerId, 1, ids[2], 'x']);
+  await expectRow('reclamar de nuevo el propio lugar', 'CALL ClaimTeamMakerSeat(?, ?, ?, ?)', [makerId, 1, ids[1], 'hash1b'], () => null);
+
+  await expectRow('GetCaptainPositions', 'CALL GetCaptainPositions(?, ?, ?)', [m3, ids[0], ids[1]], (rows) =>
+    rows.length === 1 && 'pos0' in rows[0] && 'pos1' in rows[0] ? null : JSON.stringify(rows),
+  );
+  await call('CALL StartTeamMakerPicking(?, ?, ?)', [makerId, 0, true]);
+  // 8 en total: 6 elecciones, orden A B B A A B
+  const picks = [
+    [0, 0, ids[2], null], [1, 1, ids[3], null], [2, 1, null, guestIds[0]],
+    [3, 0, ids[4], null], [4, 0, null, guestIds[1]], [5, 1, ids[5], null],
+  ];
+  for (const [turn, seat, playerId, guestId] of picks) {
+    if (turn === 5) {
+      // Antes de la ultima: repetir un turno ya jugado lo frena la PK.
+      await expectErrno('elegir dos veces el mismo turno', 1062, 'CALL AddTeamMakerPick(?, ?, ?, ?, ?, ?)', [
+        makerId, 4, 0, ids[5], null, false,
+      ]);
+    }
+    await call('CALL AddTeamMakerPick(?, ?, ?, ?, ?, ?)', [makerId, turn, seat, playerId, guestId, turn === 5]);
+  }
+  await expectErrno('elegir con el maker ya votando', 46601, 'CALL AddTeamMakerPick(?, ?, ?, ?, ?, ?)', [
+    makerId, 6, 1, ids[5], null, true,
+  ]);
+  await call('CALL SetTeamMakerVote(?, ?, ?)', [makerId, 0, 'D']);
+  await call('CALL SetTeamMakerVote(?, ?, ?)', [makerId, 1, 'D']);
+  await expectRow('FinishTeamMaker -> partido R con 4 y 4', 'CALL FinishTeamMaker(?, ?, ?, ?)', [makerId, 'L', 'D', 1], (rows) => {
+    const m = rows[0];
+    const all = [...parse(m.players), ...parse(m.guests)];
+    const d = all.filter((p) => p.team === 'D').length;
+    return m.state === 'R' && d === 4 && all.length === 8 ? null : `state=${m.state} D=${d} total=${all.length}`;
+  });
+
+  // ── 13. cancelar vuelve a preparacion ─────────────────────────────────────
+  await call('CALL ClearMatchTeams(?)', [m3]);
+  const [mk2] = await call('CALL CreateTeamMaker(?, ?)', [m3, 'tercercodigotercercodi']);
+  await call('CALL ClaimTeamMakerSeat(?, ?, ?, ?)', [mk2.makerId, 0, ids[0], 'h']);
+  await expectRow('RestartTeamMaker libera lugares', 'CALL RestartTeamMaker(?, ?)', [mk2.makerId, 'cuartocodigocuartocodi'], () => null);
+  const [[seatsAfter]] = await db.query('SELECT COUNT(playerId) AS n FROM TeamMakerSeats WHERE makerId = ?', [mk2.makerId]);
+  if (seatsAfter.n !== 0) fail('RestartTeamMaker libera lugares', `quedan ${seatsAfter.n}`);
+  await expectRow('CancelTeamMaker -> partido P sin equipos', 'CALL CancelTeamMaker(?)', [mk2.makerId], (rows) =>
+    rows[0]?.state === 'P' && parse(rows[0].players).every((p) => p.team === null) ? null : `state=${rows[0]?.state}`,
+  );
+  await expectRow('sin maker activo, el partido se edita', 'CALL UpdateMatch(?, NULL, 0, ?, NOW(), FALSE, ?, NULL, ?, ?)', [
+    m3, 'VERIFY', json(eight), 'P', json([{ name: 'Hernán', team: null }]),
+  ], () => null);
 } catch (e) {
   fail('ejecucion', e.message);
 } finally {
