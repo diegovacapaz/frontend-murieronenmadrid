@@ -46,6 +46,8 @@ export interface PickEntry {
 export interface TeamMakerState {
   makerId: number;
   matchId: number;
+  /** Para que la vista sepa a qué torneo volver al salir. */
+  tournamentId: number;
   isDerby: boolean;
   status: MakerStatus;
   seats: [SeatState, SeatState];

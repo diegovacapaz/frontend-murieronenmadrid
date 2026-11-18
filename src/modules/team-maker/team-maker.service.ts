@@ -456,6 +456,7 @@ export class TeamMakerService {
     return {
       makerId: r.makerId,
       matchId: r.matchId,
+      tournamentId: r.tournamentId,
       isDerby: r.isDerby,
       status: r.status,
       seats,

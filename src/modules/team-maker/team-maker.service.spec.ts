@@ -156,6 +156,7 @@ describe('TeamMakerService', () => {
     expect(state.order).toEqual([0, 1, 1, 0]);
     expect(state.pool.map((e) => e.ref)).toEqual([P(5), G(9)]);
     expect(state.roster).toHaveLength(6);
+    expect(state.tournamentId).toBe(5);
     expect(state.paused).toBe(true);
   });
 
