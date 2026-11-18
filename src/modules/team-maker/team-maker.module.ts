@@ -32,5 +32,6 @@ import { TeamMakerService } from './team-maker.service';
     },
     TeamMakerGateway,
   ],
+  exports: [TeamMakerService],
 })
 export class TeamMakerModule {}

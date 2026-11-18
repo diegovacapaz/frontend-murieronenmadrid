@@ -136,6 +136,29 @@ export class TeamMakerService {
     return { makerId: fresh.makerId, captainCode: fresh.captainCode, status: fresh.status };
   }
 
+  /**
+   * El partido se borró: la base ya se llevó el armado en cascada, pero el de
+   * memoria seguía vivo y su página también. Se les muestra cancelado a los que
+   * están mirando y se olvida.
+   */
+  discard(matchId: number): void {
+    const live = this.live.get(matchId);
+    if (!live) return;
+    this.live.delete(matchId);
+    for (const seat of [0, 1] as Seat[]) {
+      this.clock.clearTimeout(live.graceTimer[seat]);
+      live.graceTimer[seat] = null;
+    }
+    const wasActive = live.record.status !== 'F' && live.record.status !== 'C';
+    live.record = { ...live.record, status: 'C' };
+    this.broadcast(live);
+    for (const socketId of live.sockets.keys()) {
+      this.socketMatch.delete(socketId);
+      this.limiter.forget(socketId);
+    }
+    if (wasActive) this.notify(RealtimeEvent.TEAMMAKER_FINISHED, this.eventPayload(live.record));
+  }
+
   // ─────────────────────────────── socket ─────────────────────────────────────
 
   /**

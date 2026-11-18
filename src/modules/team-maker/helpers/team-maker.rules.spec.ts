@@ -51,14 +51,16 @@ describe('decideFirstSeat', () => {
 const ref = (id: number): PickRef => ({ kind: 'P', id });
 
 function stateAt(turn: number, overrides: Partial<TeamMakerState> = {}): TeamMakerState {
-  const seat = { playerId: 1, name: 'Juan', photo: null, connected: true, voted: false };
+  const seat = { playerId: 1, name: 'Juan', photo: null, connected: true, released: false, voted: false };
   return {
     makerId: 1,
     matchId: 1,
+    tournamentId: 1,
     isDerby: false,
     status: 'K',
     seats: [seat, { ...seat, playerId: 2, name: 'Diego' }],
     candidates: [],
+    roster: [],
     firstSeat: 0,
     firstByDraw: false,
     order: [0, 1, 1, 0],

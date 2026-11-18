@@ -326,6 +326,28 @@ describe('TeamMakerService', () => {
     expect((await service.publicState(70)).viewers).toBe(1);
   });
 
+  it('borrar el partido suelta el armado de memoria y lo muestra cancelado', async () => {
+    await twoCaptains();
+    service.leave('a'); // queda un timer de gracia pendiente
+    room.length = 0;
+    events.length = 0;
+    repo.record = null; // la base lo borró en cascada
+
+    service.discard(70);
+
+    expect(service.snapshot(70)).toBeNull();
+    const last = room.at(-1)!;
+    expect(last[0]).toBe('tm:state');
+    expect((last[1] as { status: string }).status).toBe('C');
+    expect(events.map(([e]) => e)).toEqual(['teammaker:finished']);
+    await expect(service.publicState(70)).rejects.toMatchObject({ code: 'TEAM_MAKER_NOT_FOUND' });
+    await expect(service.pick('b', 0, P(3))).rejects.toBeDefined();
+    room.length = 0;
+    clock.advance(60_000); // la gracia se canceló: no vuelve a emitir
+    expect(room).toEqual([]);
+    expect(service.snapshot(70)).toBeNull();
+  });
+
   it('el estado publico de un partido sin armado es TEAM_MAKER_NOT_FOUND', async () => {
     repo.record = null;
     await expect(service.publicState(70)).rejects.toMatchObject({ code: 'TEAM_MAKER_NOT_FOUND' });

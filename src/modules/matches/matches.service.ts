@@ -2,6 +2,7 @@ import { Inject, Injectable, NotFoundException } from '@nestjs/common';
 import { AppErrorCode } from '../../common/constants/error-codes.constants';
 import { RealtimeEvent } from '../../realtime/realtime.events';
 import { RealtimeService } from '../../realtime/realtime.service';
+import { TeamMakerService } from '../team-maker/team-maker.service';
 import { CreateMatchDto } from './dto/create-match.dto';
 import { FinishMatchDto } from './dto/finish-match.dto';
 import { MatchNotesResponseDto } from './dto/match-notes.dto';
@@ -35,6 +36,7 @@ export class MatchesService {
     @Inject(MATCHES_REPOSITORY)
     private readonly matchesRepository: IMatchesRepository,
     private readonly realtime: RealtimeService,
+    private readonly teamMaker: TeamMakerService,
   ) {}
 
   private async getMatchOrFail(matchId: number, isAdmin: boolean): Promise<Match> {
@@ -143,6 +145,8 @@ export class MatchesService {
   async remove(matchId: number): Promise<MatchResponseDto> {
     const removed = await this.matchesRepository.remove(matchId);
     const response = MatchMapper.toResponseDto(removed);
+    // Su armado se fue en cascada con el partido; el de memoria hay que soltarlo.
+    this.teamMaker.discard(matchId);
 
     this.notify(RealtimeEvent.MATCH_DELETED, response);
     return response;
