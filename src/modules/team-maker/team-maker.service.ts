@@ -138,6 +138,14 @@ export class TeamMakerService {
 
   // ─────────────────────────────── socket ─────────────────────────────────────
 
+  /**
+   * El estado de un armado sin entrar a su sala: lo usa la card de la portada,
+   * que no debe contar como viewer. Si no esta en memoria lo rearma de la base.
+   */
+  async publicState(matchId: number): Promise<TeamMakerState> {
+    return this.toState(await this.ensure(matchId));
+  }
+
   /** Estado actual de un armado que esta en memoria (para tests y diagnostico). */
   snapshot(matchId: number): TeamMakerState | null {
     const live = this.live.get(matchId);

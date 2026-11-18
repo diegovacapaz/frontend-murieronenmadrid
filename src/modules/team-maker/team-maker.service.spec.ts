@@ -316,4 +316,17 @@ describe('TeamMakerService', () => {
     await service.join('a', 70, { code: captainCode });
     expect((await service.claim('a', 1)).seat).toBe(0);
   });
+
+  it('el estado publico se puede leer sin entrar a la sala (no cuenta como viewer)', async () => {
+    const state = await service.publicState(70);
+    expect(state.status).toBe('W');
+    expect(state.viewers).toBe(0);
+    await service.join('v', 70, {});
+    expect((await service.publicState(70)).viewers).toBe(1);
+  });
+
+  it('el estado publico de un partido sin armado es TEAM_MAKER_NOT_FOUND', async () => {
+    repo.record = null;
+    await expect(service.publicState(70)).rejects.toMatchObject({ code: 'TEAM_MAKER_NOT_FOUND' });
+  });
 });
