@@ -226,7 +226,11 @@ try {
 
   const [, , , roster] = (await db.query('CALL GetTeamMakerByMatch(?)', [m3]))[0];
   const guestIds = roster.filter((r) => r.kind === 'G').map((r) => r.id);
-  await expectErrno('reclamar con un random', 46601, 'CALL ClaimTeamMakerSeat(?, ?, ?, ?)', [makerId, 0, guestIds[0], 'h']);
+  // Un random no tiene id de jugador: lo que el SP puede rechazar es un id que no
+  // es de ningún jugador. (Pasarle el guestId era un falso caso: con la tabla de
+  // randoms recién creada el guestId 1 coincide con el jugador 1, que está convocado.)
+  const [[{ noPlayer }]] = await db.query('SELECT COALESCE(MAX(playerId), 0) + 1000 AS noPlayer FROM Players');
+  await expectErrno('reclamar con un id que no es de un jugador', 46601, 'CALL ClaimTeamMakerSeat(?, ?, ?, ?)', [makerId, 0, noPlayer, 'h']);
   await expectErrno('reclamar con alguien no convocado', 46601, 'CALL ClaimTeamMakerSeat(?, ?, ?, ?)', [makerId, 0, ids[7], 'h']);
   await call('CALL ClaimTeamMakerSeat(?, ?, ?, ?)', [makerId, 0, ids[0], 'hash0']);
   await expectErrno('el mismo jugador en los dos lugares', 46601, 'CALL ClaimTeamMakerSeat(?, ?, ?, ?)', [makerId, 1, ids[0], 'hash1']);

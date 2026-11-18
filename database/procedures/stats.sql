@@ -330,7 +330,7 @@ BEGIN
     INNER JOIN Teams t ON t.team = r.team
     WHERE r.playerId = pPlayerId
     GROUP BY r.team, t.isDerbyTeam
-    ORDER BY played DESC;
+    ORDER BY played DESC, r.team;
 
     -- ── 8. streaks ────────────────────────────────────────────────────────────
     -- Una fila siempre, aunque nunca haya jugado: vPlayerStreaks parte de
